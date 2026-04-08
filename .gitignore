@@ -11,6 +11,7 @@ build/
 *.egg
 !jaxmech/tools/build/
 !jaxmech/tools/build/**
+jaxmech/tools/build/__pycache__/
 
 # OS
 .DS_Store
