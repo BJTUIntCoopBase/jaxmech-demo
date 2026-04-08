@@ -1,0 +1,29 @@
+# Machine-local config (generated from template)
+Config/env.cfg
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+!jaxmech/tools/build/
+!jaxmech/tools/build/**
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Local working directory
+StoredModels/
+
+# Temporary
+*.tmp

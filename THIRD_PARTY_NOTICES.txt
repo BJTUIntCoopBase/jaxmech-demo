@@ -1,0 +1,19 @@
+Third-Party Source Notices for jaxmech-demo
+===========================================
+
+This repository vendors source code from the following open-source project.
+
+1. external/jax_fem/
+--------------------
+Upstream project: JAX-FEM
+Upstream repository: https://github.com/deepmodeling/jax-fem
+Upstream license: GNU General Public License v3.0 (GPL-3.0)
+Local status: vendored copy with local integration-oriented modifications
+License text: see the repository root LICENSE file.
+
+Locally modified vendored files:
+- external/jax_fem/__init__.py
+- external/jax_fem/basis.py
+- external/jax_fem/problem.py
+- external/jax_fem/solver.py
+- external/jax_fem/utils.py
