@@ -33,8 +33,7 @@ A minimal demo of the **jaxmech** computational mechanics library, showcasing:
 #### Prerequisites
 
 - **WSL** (Windows Subsystem for Linux) with Python 3.9+
-- **WSL Python packages**: `jax`, `jaxlib`, `numpy`, `scipy`, `meshio`, `cvxpy`, `clarabel`
-- **Windows Python** for the Web UI: `pip install fastapi uvicorn pydantic websockets`
+- **Windows Python 3.9+** for the Web UI
 
 #### 1. Clone
 
@@ -43,20 +42,50 @@ git clone https://github.com/BJTUIntCoopBase/jaxmech-demo.git
 cd jaxmech-demo
 ```
 
-#### 2. Run Linear Elastic Analysis
+#### 2. Bootstrap the environment
+
+Recommended: let the repository create `Config/env.cfg`, install the Windows web
+dependencies, and install the WSL analysis dependencies in one step.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\Config\setup_demo_env.ps1
+```
+
+If you already have a dedicated WSL JAX environment, point the demo to that
+interpreter explicitly:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\Config\setup_demo_env.ps1 `
+	-WslPython /home/yourname/miniconda3/envs/jax-fem-env/bin/python
+```
+
+Dependency files shipped with the repo:
+
+- `requirements-web.txt` — Windows-side Web UI and MAT inspection dependencies
+- `requirements-wsl.txt` — WSL-side analysis dependencies (`jax[cpu]`, `meshio`, `cvxpy`, `clarabel`, ...)
+
+Notes:
+
+- `requirements-wsl.txt` installs `jax[cpu]` for a reproducible CPU demo setup.
+- If you already manage a CUDA-enabled JAX environment, keep that environment
+	and only set `wsl_python` in `Config/env.cfg`.
+- `Config/start_web.bat` will also auto-install `requirements-web.txt` on demand,
+	but `Config/setup_demo_env.ps1` is the recommended first-run path.
+
+#### 3. Run Linear Elastic Analysis
 
 ```powershell
 # From Windows PowerShell
 .\Config\run_in_wsl.ps1 -m jaxmech.tools.build.build_model_mat -- --config Examples/PlateWithHole/inc_analysis/inc_analysis.template.cfg
 ```
 
-#### 3. Run Shakedown Analysis
+#### 4. Run Shakedown Analysis
 
 ```powershell
 .\Config\run_in_wsl.ps1 -m jaxmech.modules.shakedown.run -- --config Examples/PlateWithHole/shakedown/shakedown_analysis.template.cfg
 ```
 
-#### 4. Launch Web UI
+#### 5. Launch Web UI
 
 ```cmd
 Config\start_web.bat
@@ -117,8 +146,7 @@ For the full version or collaboration inquiries, contact: **gengchen@bjtu.edu.cn
 #### 环境要求
 
 - **WSL**（Windows Subsystem for Linux），Python 3.9+
-- **WSL Python 依赖**：`jax`、`jaxlib`、`numpy`、`scipy`、`meshio`、`cvxpy`、`clarabel`
-- **Windows Python**（Web 界面）：`pip install fastapi uvicorn pydantic websockets`
+- **Windows Python 3.9+**（用于 Web 界面）
 
 #### 1. 克隆
 
@@ -127,20 +155,47 @@ git clone https://github.com/BJTUIntCoopBase/jaxmech-demo.git
 cd jaxmech-demo
 ```
 
-#### 2. 运行线弹性分析
+#### 2. 初始化环境
+
+推荐直接运行仓库自带脚本，让它一次性完成 `Config/env.cfg` 创建、
+Windows Web 依赖安装，以及 WSL 分析依赖安装：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\Config\setup_demo_env.ps1
+```
+
+如果你已经有单独的 WSL JAX 环境，可以显式指定解释器：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\Config\setup_demo_env.ps1 `
+	-WslPython /home/yourname/miniconda3/envs/jax-fem-env/bin/python
+```
+
+仓库内置的依赖清单：
+
+- `requirements-web.txt`：Windows 侧 Web UI 与 MAT 元数据读取依赖
+- `requirements-wsl.txt`：WSL 侧分析依赖（`jax[cpu]`、`meshio`、`cvxpy`、`clarabel` 等）
+
+说明：
+
+- `requirements-wsl.txt` 默认安装 `jax[cpu]`，适合作为公开 demo 的 CPU 环境。
+- 如果你已经维护了 CUDA 版 JAX 环境，保留该环境即可，只需在 `Config/env.cfg` 中设置 `wsl_python`。
+- `Config/start_web.bat` 也会按需自动安装 `requirements-web.txt`，但首次使用仍推荐先运行 `Config/setup_demo_env.ps1`。
+
+#### 3. 运行线弹性分析
 
 ```powershell
 # 在 Windows PowerShell 中
 .\Config\run_in_wsl.ps1 -m jaxmech.tools.build.build_model_mat -- --config Examples/PlateWithHole/inc_analysis/inc_analysis.template.cfg
 ```
 
-#### 3. 运行安定分析
+#### 4. 运行安定分析
 
 ```powershell
 .\Config\run_in_wsl.ps1 -m jaxmech.modules.shakedown.run -- --config Examples/PlateWithHole/shakedown/shakedown_analysis.template.cfg
 ```
 
-#### 4. 启动 Web 界面
+#### 5. 启动 Web 界面
 
 ```cmd
 Config\start_web.bat

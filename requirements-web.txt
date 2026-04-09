@@ -1,0 +1,7 @@
+# Windows-side dependencies for the demo Web UI and MAT metadata inspection.
+fastapi
+uvicorn
+pydantic
+websockets
+numpy
+scipy

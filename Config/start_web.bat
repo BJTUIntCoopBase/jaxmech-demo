@@ -95,7 +95,17 @@ if "!WIN_PYTHON!"=="" (
 echo.
 echo Python: !WIN_PYTHON!
 echo Installing/checking web dependencies...
-"!WIN_PYTHON!" -m pip install fastapi uvicorn pydantic websockets --quiet 2>nul
+if exist "requirements-web.txt" (
+    "!WIN_PYTHON!" -m pip install -r "requirements-web.txt" --quiet
+) else (
+    "!WIN_PYTHON!" -m pip install numpy scipy fastapi uvicorn pydantic websockets --quiet
+)
+if errorlevel 1 (
+    echo [ERROR] Failed to install/check Windows web dependencies.
+    echo        Try: powershell -ExecutionPolicy Bypass -File Config\setup_demo_env.ps1
+    pause
+    exit /b 1
+)
 
 echo Releasing port 8080 if occupied...
 for /f "tokens=5" %%a in ('netstat -ano 2^>nul ^| findstr ":8080" ^| findstr "LISTEN"') do (

@@ -1,0 +1,8 @@
+# WSL-side runtime dependencies for demo analysis workflows.
+# The default setup uses CPU JAX for the public demo environment.
+jax[cpu]
+numpy
+scipy
+meshio
+cvxpy
+clarabel
