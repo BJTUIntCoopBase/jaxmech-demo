@@ -9,11 +9,13 @@ from jaxmech.env.env import PROJECT_ROOT
 
 WORKFLOW_KEYWORDS = {
     "inc_analysis": ("inc_analysis",),
+    "validation": ("validation",),
     "shakedown": ("shakedown",),
 }
 
 DEFAULT_TEMPLATE_PATHS = {
     "inc_analysis": PROJECT_ROOT / "jaxmech" / "modules" / "inc_analysis" / "templates" / "inc_analysis.template.cfg",
+    "validation": PROJECT_ROOT / "jaxmech" / "modules" / "validation" / "elastic" / "templates" / "validation.template.cfg",
     "shakedown": PROJECT_ROOT / "jaxmech" / "modules" / "shakedown" / "templates" / "shakedown_analysis.template.cfg",
 }
 

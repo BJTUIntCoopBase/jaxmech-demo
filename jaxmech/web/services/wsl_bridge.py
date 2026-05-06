@@ -262,6 +262,7 @@ async def run_wsl_module_async(
     *,
     on_stdout: Optional[callable] = None,
     on_stderr: Optional[callable] = None,
+    on_process: Optional[callable] = None,
 ) -> int:
     """Run a jaxmech module via ``wsl -e bash`` asynchronously.
 
@@ -312,6 +313,10 @@ async def run_wsl_module_async(
         stderr=asyncio.subprocess.PIPE,
         cwd=str(PROJECT_ROOT),
     )
+    if on_process:
+        maybe_coro = on_process(proc)
+        if asyncio.iscoroutine(maybe_coro):
+            await maybe_coro
 
     async def _stream(pipe, callback):
         while True:

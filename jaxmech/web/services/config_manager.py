@@ -17,6 +17,10 @@ MODULE_TEMPLATES: dict[str, tuple[Path, str]] = {
         PROJECT_ROOT / "jaxmech" / "modules" / "inc_analysis" / "templates" / "inc_analysis.template.cfg",
         "inc_analysis.template.cfg",
     ),
+    "validation": (
+        PROJECT_ROOT / "jaxmech" / "modules" / "validation" / "elastic" / "templates" / "validation.template.cfg",
+        "validation.template.cfg",
+    ),
     "shakedown": (
         PROJECT_ROOT / "jaxmech" / "modules" / "shakedown" / "templates" / "shakedown_analysis.template.cfg",
         "shakedown_analysis.template.cfg",
@@ -73,8 +77,7 @@ def read_module_cfg(module: str, model_path: str) -> dict[str, Any]:
 def write_module_cfg(module: str, model_path: str, content: str) -> str:
     if module not in MODULE_TEMPLATES:
         raise ValueError(f"Unsupported demo module: {module}")
-    model_dir = Path(model_path)
-    module_dir = model_dir if module == "shakedown" and "shakedown" in [part.lower() for part in model_dir.parts] else model_dir / module
+    module_dir = Path(model_path)
     module_dir.mkdir(parents=True, exist_ok=True)
     cfg_path = module_dir / MODULE_TEMPLATES[module][1]
     cfg_path.write_text(content, encoding="utf-8")
