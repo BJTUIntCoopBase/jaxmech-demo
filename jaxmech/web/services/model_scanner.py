@@ -15,6 +15,16 @@ def _file_info(path: Path) -> dict[str, Any]:
     return {"name": path.name, "mtime": int(path.stat().st_mtime)}
 
 
+def _workflow_mats(root: Path) -> list[Path]:
+    if not root.is_dir():
+        return []
+    return sorted(
+        path
+        for path in root.rglob("*.mat")
+        if not any(part.lower() == "inputs" for part in path.relative_to(root).parts)
+    )
+
+
 def _model_status(model_dir: Path) -> dict[str, Any]:
     """Inspect one model directory for the demo-supported workflows only."""
     abaqus_dir = model_dir / "abaqus"
@@ -23,7 +33,7 @@ def _model_status(model_dir: Path) -> dict[str, Any]:
     sd_dir = model_dir / "shakedown"
 
     inp_files = sorted(abaqus_dir.glob("*.inp")) if abaqus_dir.is_dir() else []
-    inc_mats = sorted(inc_dir.glob("*.mat")) if inc_dir.is_dir() else []
+    inc_mats = _workflow_mats(inc_dir)
     val_mats = sorted(val_dir.rglob("*.mat")) if val_dir.is_dir() else []
     sd_mats = sorted(sd_dir.rglob("*.mat")) if sd_dir.is_dir() else []
     inc_names = {path.name for path in inc_mats}
@@ -38,7 +48,7 @@ def _model_status(model_dir: Path) -> dict[str, Any]:
         },
         "inc_analysis": {
             "has_mat": bool(inc_mats),
-            "mat_files": [path.name for path in inc_mats],
+            "mat_files": [str(path.relative_to(inc_dir)) for path in inc_mats],
             "mat_files_info": [_file_info(path) for path in inc_mats],
             "has_cfg": bool(list(inc_dir.glob("*.cfg"))) if inc_dir.is_dir() else False,
         },
