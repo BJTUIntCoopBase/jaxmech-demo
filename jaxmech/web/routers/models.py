@@ -12,7 +12,6 @@ from pydantic import BaseModel
 from jaxmech.io.abaqus.inp_metadata import parse_inp_metadata_batch
 from jaxmech.io.abaqus.inp_metadata_store import (
     decode_analysis_input_bundle,
-    save_analysis_input_snapshot,
 )
 from jaxmech.web.services.model_scanner import get_model_detail, scan_models
 
@@ -149,6 +148,12 @@ async def inp_meta(req: InpMetaRequest) -> dict[str, Any]:
 
 @router.post("/prepare-inc-analysis")
 async def prepare_inc_analysis(req: PrepareIncAnalysisRequest) -> dict[str, Any]:
+    """Validate the selected solid INP files before launching inc_analysis.
+
+    The demo keeps inc_analysis output lightweight: no parse-sidecar MAT is
+    written here, so the final runner remains the only step that creates MAT
+    files for one calculation.
+    """
     model_dir = Path(req.model_path)
     if not model_dir.is_dir():
         raise HTTPException(404, f"Model directory not found: {req.model_path}")
@@ -171,22 +176,21 @@ async def prepare_inc_analysis(req: PrepareIncAnalysisRequest) -> dict[str, Any]
             raise HTTPException(422, f"Only solid INP files are supported in the demo: {inp_path.name}")
 
         result_mat_path = model_dir / "inc_analysis" / f"{inp_path.stem}.mat"
-        status = save_analysis_input_snapshot(result_mat_path, inp_meta, req.analysis_input, source=req.source)
         results.append({
             "inp_path": str(inp_path),
             "inp_name": inp_path.name,
-            "result_mat_path": status["result_mat_path"],
-            "sidecar_mat_path": status["sidecar_mat_path"],
-            "changed_fields": status["changed_fields"],
-            "history_count": status["history_count"],
-            "updated_result_mat": status["updated_result_mat"],
-            "analysis_input": status["analysis_input"],
+            "result_mat_path": str(result_mat_path),
+            "sidecar_mat_path": "",
+            "changed_fields": [],
+            "history_count": 0,
+            "updated_result_mat": False,
+            "analysis_input": req.analysis_input,
         })
 
     return {
         "count": len(results),
         "workflow_dir": str(model_dir / "inc_analysis"),
-        "sidecar_dir": str(model_dir / "inc_analysis" / "inputs"),
+        "sidecar_dir": "",
         "details": results,
     }
 
