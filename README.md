@@ -1,162 +1,41 @@
 # jaxmech-demo
 
-`jaxmech-demo` is a lightweight public demo of the jaxmech workflow.
+**jaxmech-demo** 是 jaxmech 的轻量公开演示版，用于展示从实体单元弹性分析、ODB validation、CVXPY shakedown 到 Web visualization 的完整最小工作流。
 
-The runnable code is intentionally limited to:
+> Demo 保留完整版 Web GUI 的布局、sidebar、dashboard card、任务管理和 visualization 体验；未开放的模块以前端加锁形式呈现，对应后端代码和 runner 不进入 demo 仓库。
 
-- 3D solid linear elastic `inc_analysis`
-- Solid elastic ODB `validation`
-- Solid lower-bound shakedown with the C formulation and CVXPY/Clarabel backend
-- Browser-based Web UI with the same layout as the full version
-- Full task management and MAT field visualization for elastic and shakedown results
+## ✨ 新版本亮点
 
-The Web UI keeps the full-version layout and menu shape. Unsupported analysis
-entries are locked in the frontend and their analysis code/backend runners are
-not included in this demo repository. The settings page also provides one-click
-environment detection and one-click installation of supported Windows Web
-libraries.
+| 图标 | 新增/改进 | 说明 |
+| --- | --- | --- |
+| 🧭 | 完整版菜单布局 | Demo 与 full version 保持同一套 GUI 风格，未开放入口显示锁定状态。 |
+| 🧱 | 实体弹性 `inc_analysis` | 支持 3D solid linear elastic 分析；正式计算一次只生成一个结果 MAT。 |
+| 🧪 | Solid elastic ODB validation | Validation 模块包含实体单元弹性对标流程，可从已有 JAX MAT 与 ABAQUS ODB/MAT 做比较。 |
+| 🛡️ | CVXPY shakedown | 支持实体单元 lower-bound shakedown 的 C formulation + CVXPY/Clarabel backend。 |
+| 🎨 | MAT 场变量可视化 | 保留 visualization 模块完整功能，支持 elastic、validation 和 shakedown MAT。 |
+| 📋 | 任务管理 | Web task runs、日志、artifact 和历史任务恢复保留完整体验。 |
+| 📁 | 模型浏览增强 | 支持浏览 `Examples/` 和 `StoredModels/`，并识别 timestamp run folder 中的结果。 |
+| ⚙️ | 环境设置增强 | Settings 中提供一键自动检测，以及一键安装所有支持库；已检测到部分库时会补齐缺失项。 |
 
-## Quick Start
-
-### Requirements
-
-- Windows with WSL
-- WSL Python 3.9+ for JAX analysis
-- Windows Python 3.9+ for the Web UI
-
-### Install
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\Config\setup_demo_env.ps1
-```
-
-If you already have a WSL JAX environment:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\Config\setup_demo_env.ps1 `
-  -WslPython /home/yourname/miniconda3/envs/jax-fem-env/bin/python
-```
-
-### Run Solid Elastic Analysis
-
-```powershell
-.\Config\run_in_wsl.ps1 -m jaxmech.tools.build.build_model_mat -- --config Examples/PlateWithHole/inc_analysis/inc_analysis.template.cfg
-```
-
-### Run Shakedown
-
-Run elastic analysis first, then:
-
-```powershell
-.\Config\run_in_wsl.ps1 -m jaxmech.modules.shakedown.run -- --config Examples/PlateWithHole/shakedown/shakedown_analysis.template.cfg
-```
-
-### Run Solid Elastic ODB Validation
-
-Run elastic analysis first, place the matching `.odb` file under the model
-`abaqus/` folder, then:
-
-```powershell
-.\Config\run_in_wsl.ps1 -m jaxmech.modules.validation.elastic.run -- --config Examples/PlateWithHole/validation/validation.template.cfg
-```
-
-### Launch Web UI
-
-```cmd
-Config\start_web.bat
-```
-
-Open http://127.0.0.1:8080.
-
-## Included Examples
-
-| Example | Description |
-| --- | --- |
-| `PlateWithHole` | Solid 3D plate with two elastic load cases and shakedown template |
-| `PlateWithHoleMultiEle` | Solid mixed-element plate using C3D8, C3D6, and C3D4 |
-
-## Demo Scope
-
-Available in this repository:
-
-| Area | Status |
-| --- | --- |
-| Solid elastic `inc_analysis` | Available |
-| Solid elastic ODB validation | Available |
-| Solid C-formulation shakedown with CVXPY | Available |
-| Web UI | Available, full-version layout with locked unsupported entries |
-| Task management | Available |
-| MAT visualization | Available |
-| Shell analysis / shell validation | Locked menu only |
-| Elastic-plastic incremental analysis | Locked menu only |
-| Direct methods / DCA | Locked menu only |
-| Nonlinear / DCA validation | Locked menu only |
-| Gurobi backend | Locked menu only |
-| Topology optimization | Locked menu only |
-
-For the full version or collaboration inquiries, contact **gengchen@bjtu.edu.cn**.
-
-## License
-
-GPL-3.0. See [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt).
-
----
-
-# jaxmech-demo 中文说明
-
-`jaxmech-demo` 是 jaxmech 的轻量公开演示版本。
-
-本仓库中实际可运行的代码仅限于：
-
-- 三维实体单元线弹性 `inc_analysis`
-- 实体单元弹性 ODB `validation`
-- 实体单元下限安定分析，C formulation，CVXPY/Clarabel backend
-- 与完整版布局一致的 Web 端工作台
-- 完整任务管理，以及弹性与 shakedown MAT 结果的场变量可视化
-
-Web 端保留完整版布局和菜单结构。不支持的分析入口在前端锁定，对应分析代码和后端 runner 不包含在 demo 仓库中。设置页保留一键自动检测，并增加一键安装所有支持的 Windows Web 库。
-
-## 快速开始
+## 🚀 快速开始
 
 ### 环境要求
 
 - Windows + WSL
-- WSL Python 3.9+，用于 JAX 分析
-- Windows Python 3.9+，用于 Web UI
+- WSL Python 3.9+，用于 JAX 分析流程
+- Windows Python 3.9+，用于 Web UI、任务管理和 visualization
 
-### 初始化环境
+### 安装 demo 环境
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\Config\setup_demo_env.ps1
 ```
 
-如已有 WSL JAX 环境：
+如果你已经有可用的 WSL JAX 环境，可以显式指定：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\Config\setup_demo_env.ps1 `
   -WslPython /home/yourname/miniconda3/envs/jax-fem-env/bin/python
-```
-
-### 运行实体弹性分析
-
-```powershell
-.\Config\run_in_wsl.ps1 -m jaxmech.tools.build.build_model_mat -- --config Examples/PlateWithHole/inc_analysis/inc_analysis.template.cfg
-```
-
-### 运行 shakedown
-
-先运行弹性分析生成 MAT，再执行：
-
-```powershell
-.\Config\run_in_wsl.ps1 -m jaxmech.modules.shakedown.run -- --config Examples/PlateWithHole/shakedown/shakedown_analysis.template.cfg
-```
-
-### 运行实体弹性 ODB validation
-
-先运行弹性分析生成 MAT，并将匹配的 `.odb` 文件放到模型的 `abaqus/` 目录，然后执行：
-
-```powershell
-.\Config\run_in_wsl.ps1 -m jaxmech.modules.validation.elastic.run -- --config Examples/PlateWithHole/validation/validation.template.cfg
 ```
 
 ### 启动 Web UI
@@ -165,32 +44,94 @@ powershell -ExecutionPolicy Bypass -File .\Config\setup_demo_env.ps1 `
 Config\start_web.bat
 ```
 
-浏览器打开 http://127.0.0.1:8080。
+然后在浏览器打开：
 
-## 示例模型
+```text
+http://127.0.0.1:8080
+```
 
-| 示例 | 说明 |
+## 🧩 推荐 Web 工作流
+
+1. 打开 **设置**，执行一键自动检测；如有缺失，使用一键安装所有支持库补齐 Windows Web 依赖。
+2. 进入 **模型浏览**，从 `Examples/` 或 `StoredModels/` 选择模型。
+3. 进入 **增量分析**，选择 solid INP，完成 parse 后运行 linear elastic analysis。
+4. 可选：进入 **ODB 验证**，选择已有 JAX MAT 与匹配的 ABAQUS ODB/MAT 进行 elastic validation。
+5. 进入 **安定分析**，选择弹性分析生成的 MAT，运行 C formulation + CVXPY shakedown。
+6. 在 **场变量可视化** 中查看 elastic、validation 或 shakedown 的 MAT 结果。
+7. 在 **任务管理** 中查看日志、运行状态和生成的 MAT artifact。
+
+## 🖥️ CLI 入口
+
+Web UI 是推荐入口；如需命令行运行，可使用同一套 WSL wrapper。`--config` 可以指向 Web 生成的 run folder 内配置文件，或模块模板复制后得到的配置文件。
+
+### Solid elastic analysis
+
+```powershell
+.\Config\run_in_wsl.ps1 -m jaxmech.tools.build_model_mat -- --config <path-to-inc-analysis-cfg>
+```
+
+### Solid elastic ODB validation
+
+```powershell
+.\Config\run_in_wsl.ps1 -m jaxmech.modules.validation.elastic.run -- --config <path-to-validation-cfg>
+```
+
+### CVXPY shakedown
+
+```powershell
+.\Config\run_in_wsl.ps1 -m jaxmech.modules.shakedown.run -- --config <path-to-shakedown-cfg>
+```
+
+## 📦 Included Examples
+
+| Example | 内容 |
 | --- | --- |
-| `PlateWithHole` | 三维实体含孔板，两个弹性载荷工况，附 shakedown 模板 |
-| `PlateWithHoleMultiEle` | C3D8、C3D6、C3D4 混合实体单元模型 |
+| `PlateWithHole` | 3D solid plate with hole，包含两个 elastic load cases，可用于 inc_analysis、validation 和 shakedown。 |
+| `PlateWithHoleMultiEle` | 混合实体单元示例，包含 C3D8、C3D6 和 C3D4。 |
 
-## 功能边界
+## 🔒 Demo Scope
 
-本 demo 可用功能：
+### ✅ 可用功能
 
-| 功能 | 状态 |
+| 模块 | Demo 状态 |
 | --- | --- |
-| 实体弹性 `inc_analysis` | 可用 |
-| 实体弹性 ODB validation | 可用 |
-| 实体 C formulation + CVXPY shakedown | 可用 |
-| Web UI | 可用，完整版布局，不支持入口加锁 |
-| 任务管理 | 可用 |
-| MAT 场变量可视化 | 可用 |
-| Shell 分析 / shell validation | 仅锁定菜单 |
-| 弹塑性增量分析 | 仅锁定菜单 |
-| Direct methods / DCA | 仅锁定菜单 |
-| nonlinear / DCA validation | 仅锁定菜单 |
-| Gurobi backend | 仅锁定菜单 |
-| 拓扑优化 | 仅锁定菜单 |
+| Solid linear elastic `inc_analysis` | 可运行 |
+| Solid elastic ODB `validation` | 可运行 |
+| Solid C formulation + CVXPY shakedown | 可运行 |
+| Web UI | 可用，保持完整版布局 |
+| Task management | 可用，保留完整功能 |
+| MAT visualization | 可用，保留完整功能 |
+| Model browser | 可用，浏览有限示例与本地模型 |
+| Settings | 可用，支持一键检测和一键安装支持库 |
 
-获取完整版本或合作咨询，请联系 **gengchen@bjtu.edu.cn**。
+### 🔐 仅保留锁定入口
+
+| 模块/能力 | Demo 状态 |
+| --- | --- |
+| Shell analysis / shell validation | 锁定入口 |
+| Elastic-plastic incremental analysis | 锁定入口 |
+| Direct Methods / DCA / RSDM | 锁定入口 |
+| Nonlinear / DCA validation | 锁定入口 |
+| Shell shakedown | 锁定入口 |
+| Gurobi backend | 锁定入口 |
+| Topology optimization | 锁定入口 |
+
+## 🗂️ 目录速览
+
+```text
+Config/        环境初始化、WSL wrapper 和 Web 启动脚本
+Examples/      随仓库提供的演示模型
+StoredModels/  本地模型工作区，默认不随仓库发布
+Cache/         Web task runs、日志和本地缓存
+jaxmech/       demo 版可运行源码
+```
+
+## 🤝 Full Version
+
+Demo 版用于公开演示和教学验证。若需要完整版本、更多模块或合作事宜，请联系：
+
+**gengchen@bjtu.edu.cn**
+
+## 📄 License
+
+GPL-3.0. See [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt).
