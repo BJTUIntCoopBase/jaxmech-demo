@@ -52,6 +52,11 @@ class MatMetaRequest(BaseModel):
     paths: list[str]
 
 
+class FindOdbRequest(BaseModel):
+    mat_path: str
+    model_path: str = ""
+
+
 def _unwrap_scalar(value: Any) -> Any:
     cur = value
     while isinstance(cur, np.ndarray) and cur.size == 1:
@@ -97,13 +102,31 @@ def _inp_path_from_payload(payload: dict[str, Any], metadata: dict[str, Any]) ->
     return ""
 
 
+def _check_validated(payload: dict[str, Any]) -> tuple[bool, bool]:
+    present = {key for key in payload if not key.startswith("__")}
+    if "validated_with_ODB" in present:
+        try:
+            val = np.asarray(payload["validated_with_ODB"], dtype=np.int32).reshape(-1)[0]
+            return int(val) == 1, True
+        except Exception:
+            return bool(payload["validated_with_ODB"]), True
+    for key in ("validated", "validation_passed", "odb_validation", "is_validated"):
+        if key in present:
+            try:
+                val = np.asarray(payload[key]).reshape(-1)[0]
+                return bool(val), True
+            except Exception:
+                return bool(payload[key]), True
+    return False, False
+
+
 @router.post("/scan-mats")
 async def scan_mats(req: ScanMatsRequest) -> dict[str, Any]:
     model_dir = Path(req.model_path)
     if not model_dir.is_dir():
         raise HTTPException(404, f"Model directory not found: {req.model_path}")
     results = []
-    for root_name in ("inc_analysis", "shakedown"):
+    for root_name in ("inc_analysis", "validation", "shakedown"):
         root = model_dir / root_name
         if not root.is_dir():
             continue
@@ -191,18 +214,27 @@ async def mat_meta(req: MatMetaRequest) -> dict[str, Any]:
         family = str(metadata.get("family") or _string_field(payload, "family", "solid")).lower()
         has_c = "C_sparse" in present
         is_shakedown = "ResultsSet" in present or "ElasticInputSet" in present or "residual_stress" in present
+        analysis_type = "shakedown" if is_shakedown else str(metadata.get("analysis_type") or "linear_static")
+        frame_count = int(np.asarray(payload.get("frame_u", [])).shape[0]) if "frame_u" in present else 1
+        has_frame_history = frame_count > 1
+        is_validated, has_validation_flag = _check_validated(payload)
         details.append({
             "path": raw_path,
             "name": path.name,
             "family": family,
+            "is_validated": is_validated,
+            "has_validation_flag": has_validation_flag,
             "has_required_fields": bool(has_c or is_shakedown),
             "missing_fields": [] if has_c or is_shakedown else ["C_sparse"],
             "all_fields": sorted(present),
             "inp_path": _inp_path_from_payload(payload, metadata),
-            "analysis_type": "shakedown" if is_shakedown else str(metadata.get("analysis_type") or "linear_static"),
+            "analysis_type": analysis_type,
             "material_model": str(metadata.get("material_model") or "linear_elastic"),
-            "frame_count": 1,
-            "has_frame_history": False,
+            "frame_count": frame_count,
+            "has_frame_history": has_frame_history,
+            "validation_branch": "nonlinear" if has_frame_history or analysis_type == "nonlinear_static" else "elastic",
+            "supports_time_alignment": False,
+            "supports_interpolated_validation": False,
             "analysis_stage": str(metadata.get("analysis_stage") or ("result" if has_c else "input_only")),
             "has_analysis_result": bool(has_c or is_shakedown),
             "analysis_input": bundle.get("analysis_input"),
@@ -214,7 +246,53 @@ async def mat_meta(req: MatMetaRequest) -> dict[str, Any]:
     return {
         "mat_count": len(details),
         "family": details[0]["family"] if details else "unknown",
+        "is_validated": any(item["is_validated"] for item in details),
         "has_required_fields": all(item["has_required_fields"] for item in details),
         "missing_fields": sorted({miss for item in details for miss in item["missing_fields"]}),
         "details": details,
     }
+
+
+def _candidate_odb_stems(mat_path: Path) -> list[str]:
+    stems: list[str] = []
+
+    def add(stem: str) -> None:
+        text = str(stem).strip()
+        if text and text not in stems:
+            stems.append(text)
+
+    add(mat_path.stem)
+    try:
+        import scipy.io as sio
+        payload = _clean_mat_payload(sio.loadmat(str(mat_path), squeeze_me=False, struct_as_record=False))
+        metadata = _mat_metadata_dict(payload)
+        inp_path = _inp_path_from_payload(payload, metadata)
+        if inp_path:
+            add(Path(inp_path).stem)
+    except Exception:
+        pass
+    return stems
+
+
+@router.post("/find-odb")
+async def find_odb(req: FindOdbRequest) -> dict[str, Any]:
+    mat_path = Path(req.mat_path)
+    stems = _candidate_odb_stems(mat_path)
+    search_dirs = [mat_path.parent, mat_path.parent / "abaqus", mat_path.parent.parent / "abaqus"]
+    if req.model_path:
+        model_root = Path(req.model_path)
+        search_dirs.extend([model_root / "abaqus", model_root])
+
+    for directory in search_dirs:
+        for stem in stems:
+            candidate = directory / f"{stem}.odb"
+            if candidate.is_file():
+                return {"found": True, "odb_path": str(candidate)}
+
+    if req.model_path:
+        model_root = Path(req.model_path)
+        if model_root.is_dir():
+            for stem in stems:
+                for candidate in model_root.rglob(f"{stem}.odb"):
+                    return {"found": True, "odb_path": str(candidate)}
+    return {"found": False, "odb_path": None}

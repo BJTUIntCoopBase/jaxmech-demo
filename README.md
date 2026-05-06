@@ -5,6 +5,7 @@
 The runnable code is intentionally limited to:
 
 - 3D solid linear elastic `inc_analysis`
+- Solid elastic ODB `validation`
 - Solid lower-bound shakedown with the C formulation and CVXPY/Clarabel backend
 - Browser-based Web UI with the same layout as the full version
 - Full task management and MAT field visualization for elastic and shakedown results
@@ -50,6 +51,15 @@ Run elastic analysis first, then:
 .\Config\run_in_wsl.ps1 -m jaxmech.modules.shakedown.run -- --config Examples/PlateWithHole/shakedown/shakedown_analysis.template.cfg
 ```
 
+### Run Solid Elastic ODB Validation
+
+Run elastic analysis first, place the matching `.odb` file under the model
+`abaqus/` folder, then:
+
+```powershell
+.\Config\run_in_wsl.ps1 -m jaxmech.modules.validation.elastic.run -- --config Examples/PlateWithHole/validation/validation.template.cfg
+```
+
 ### Launch Web UI
 
 ```cmd
@@ -72,14 +82,15 @@ Available in this repository:
 | Area | Status |
 | --- | --- |
 | Solid elastic `inc_analysis` | Available |
+| Solid elastic ODB validation | Available |
 | Solid C-formulation shakedown with CVXPY | Available |
 | Web UI | Available, full-version layout with locked unsupported entries |
 | Task management | Available |
 | MAT visualization | Available |
-| Shell analysis | Locked menu only |
+| Shell analysis / shell validation | Locked menu only |
 | Elastic-plastic incremental analysis | Locked menu only |
 | Direct methods / DCA | Locked menu only |
-| ODB validation | Locked menu only |
+| Nonlinear / DCA validation | Locked menu only |
 | Gurobi backend | Locked menu only |
 | Topology optimization | Locked menu only |
 
@@ -98,6 +109,7 @@ GPL-3.0. See [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICE
 本仓库中实际可运行的代码仅限于：
 
 - 三维实体单元线弹性 `inc_analysis`
+- 实体单元弹性 ODB `validation`
 - 实体单元下限安定分析，C formulation，CVXPY/Clarabel backend
 - 与完整版布局一致的 Web 端工作台
 - 完整任务管理，以及弹性与 shakedown MAT 结果的场变量可视化
@@ -139,6 +151,14 @@ powershell -ExecutionPolicy Bypass -File .\Config\setup_demo_env.ps1 `
 .\Config\run_in_wsl.ps1 -m jaxmech.modules.shakedown.run -- --config Examples/PlateWithHole/shakedown/shakedown_analysis.template.cfg
 ```
 
+### 运行实体弹性 ODB validation
+
+先运行弹性分析生成 MAT，并将匹配的 `.odb` 文件放到模型的 `abaqus/` 目录，然后执行：
+
+```powershell
+.\Config\run_in_wsl.ps1 -m jaxmech.modules.validation.elastic.run -- --config Examples/PlateWithHole/validation/validation.template.cfg
+```
+
 ### 启动 Web UI
 
 ```cmd
@@ -161,14 +181,15 @@ Config\start_web.bat
 | 功能 | 状态 |
 | --- | --- |
 | 实体弹性 `inc_analysis` | 可用 |
+| 实体弹性 ODB validation | 可用 |
 | 实体 C formulation + CVXPY shakedown | 可用 |
 | Web UI | 可用，完整版布局，不支持入口加锁 |
 | 任务管理 | 可用 |
 | MAT 场变量可视化 | 可用 |
-| Shell 分析 | 仅锁定菜单 |
+| Shell 分析 / shell validation | 仅锁定菜单 |
 | 弹塑性增量分析 | 仅锁定菜单 |
 | Direct methods / DCA | 仅锁定菜单 |
-| ODB 验证 | 仅锁定菜单 |
+| nonlinear / DCA validation | 仅锁定菜单 |
 | Gurobi backend | 仅锁定菜单 |
 | 拓扑优化 | 仅锁定菜单 |
 

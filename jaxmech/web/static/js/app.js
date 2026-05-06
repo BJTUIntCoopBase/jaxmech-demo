@@ -293,7 +293,7 @@ const App = {
       UI.moduleCard('elastic', '📐', '增量分析',
         '根据 INP 自动切换增量弹性 / 弹塑性，并生成主 .mat 文件', 'blue', '开始分析') +
       UI.moduleCard('validation', '🔍', 'ODB 验证',
-        '根据 MAT 单步 / 多步自动切换 elastic / nonlinear 验证', 'amber', '开始验证') +
+        '实体单元弹性 MAT 与 ABAQUS ODB 字段级对标', 'amber', '开始验证') +
       UI.moduleCard('shakedown', '🛡️', '安定分析',
         '基于弹性 .mat 结果进行结构安定性 SOCP 优化分析', 'purple', '开始分析') +
       UI.moduleCard('direct-methods', '∿', 'Direct Methods',
@@ -3117,12 +3117,12 @@ const App = {
       return out;
     };
     const incMats = allScanMats.filter(m => underWorkflow(m, 'inc_analysis'));
-    const dcaMats = allScanMats.filter(m => underWorkflow(m, 'steady_state_dca'));
+    const dcaMats = [];
     const validationMats = allScanMats.filter(m => underWorkflow(m, 'validation'));
     const validationByName = latestByName(validationMats);
 
-    if (!incMats.length && !dcaMats.length) {
-      container.innerHTML = UI.hint('error', '当前模型下既没有 inc_analysis MAT，也没有 steady_state_DCA MAT。验证模块需要已有结果文件。', '前往增量分析', "App.navigate('elastic')");
+    if (!incMats.length) {
+      container.innerHTML = UI.hint('error', '当前模型下没有 inc_analysis MAT。demo 版验证模块需要已有实体弹性结果文件。', '前往增量分析', "App.navigate('elastic')");
       return;
     }
 
@@ -3184,7 +3184,7 @@ const App = {
           ${matRows}
         </div>
         <div style="font-size:12px;color:var(--text-secondary);margin-top:12px">
-          状态依据：这里只检查 validation 文件夹中是否存在同名 MAT；这不是在判断 inc_analysis 结果 MAT 是否存在。若 validation 目录中的同名 MAT 可解析出 validated_with_ODB 等字段，则显示“已验证”，否则仅显示“validation 目录已有同名 MAT”。选中 MAT 后，页面会按单步 / 多步自动切换 elastic 或 nonlinear 验证表单。
+          状态依据：这里只检查 validation 文件夹中是否存在同名 MAT；这不是在判断 inc_analysis 结果 MAT 是否存在。若 validation 目录中的同名 MAT 可解析出 validated_with_ODB 等字段，则显示“已验证”，否则仅显示“validation 目录已有同名 MAT”。demo 版仅开放实体单元弹性 ODB 验证。
         </div>
       </div>`;
     }
@@ -3240,8 +3240,16 @@ const App = {
     const metaRes = await this.apiPost('/api/models/mat-meta', { paths: [matAbsPath] }).catch(() => null);
     const matMeta = metaRes?.details?.[0] || null;
     this._validation.currentMatMeta = matMeta;
+    const family = String(matMeta?.family || '').trim().toLowerCase();
+    const branch = String(matMeta?.validation_branch || 'elastic').trim().toLowerCase();
+    const materialModel = String(matMeta?.material_model || 'linear_elastic').trim().toLowerCase();
+    if (family !== 'solid' || branch !== 'elastic' || materialModel !== 'linear_elastic') {
+      formArea.innerHTML = UI.hint('warning', 'demo 版 validation 仅开放实体单元线弹性 MAT 的 ODB 对标。shell、nonlinear、DCA validation 请使用完整版。');
+      formArea.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
 
-    const isNonlinear = matMeta?.validation_branch === 'nonlinear';
+    const isNonlinear = false;
     const supportsInterpolation = Boolean(matMeta?.supports_interpolated_validation);
     const modeBadge = isNonlinear
       ? `<span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:rgba(96,165,250,0.14);color:#60a5fa;font-size:12px;font-weight:600">多步 / nonlinear</span>`
@@ -3364,7 +3372,7 @@ const App = {
     const odbWsl = this.winToWsl(odbPath);
     const modelWsl = this.winToWsl(model.path);
     const matStem = this._sanitizeRunToken(this._vizBasename(matPath).replace(/\.mat$/i, ''), 'MAT');
-    const branchLabel = matMeta.validation_branch === 'nonlinear' ? 'Nonlinear' : 'Elastic';
+    const branchLabel = 'Elastic';
     const run = this._analysisRunPaths(
       model,
       'validation',
@@ -3399,28 +3407,6 @@ const App = {
       '--validation-dir', run.runDirWsl,
       '--copy-mat',
     ];
-
-    if (matMeta.validation_branch === 'nonlinear') {
-      const alignMode = document.querySelector('input[name="val-align-mode"]:checked')?.value || 'interpolate';
-      const emitPeeqPlot = document.getElementById('val-emit-peeq-plot')?.checked;
-      module = 'jaxmech.modules.validation.nonlinear.run';
-      args = [
-        '--config', run.cfgWsl,
-        '--mat', matWsl,
-        '--odb', odbWsl,
-        '--model-root', modelWsl,
-        '--validation-dir', run.runDirWsl,
-        '--force',
-      ];
-      if (alignMode === 'align_odb') {
-        args.push('--align-time-steps');
-      } else {
-        args.push('--copy-mat');
-      }
-      if (emitPeeqPlot) {
-        args.push('--emit-peeq-plot');
-      }
-    }
 
     const result = await this.apiPost('/api/run', { module, args });
     this.viewTask(result.id);

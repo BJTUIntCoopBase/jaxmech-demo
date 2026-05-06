@@ -230,6 +230,7 @@ async def get_module_availability() -> dict[str, bool]:
 
     probes = {
         "elastic": "jaxmech.modules.inc_analysis.elastic",
+        "validation": "jaxmech.modules.validation.elastic.run",
         "shakedown": "jaxmech.modules.shakedown",
         "visualization": "jaxmech.modules.visualization",
         "optimize_cvxpy": "jaxmech.optimize.cvxpy",
@@ -237,7 +238,6 @@ async def get_module_availability() -> dict[str, bool]:
     availability = {key: find_spec(path) is not None for key, path in probes.items()}
     availability.update(
         {
-            "validation": False,
             "direct_methods": False,
             "direct_methods_steady_state": False,
             "direct_methods_shakedown": False,
