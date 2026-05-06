@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter
@@ -87,6 +89,68 @@ def _check_python_libraries() -> dict[str, Any]:
     }
 
 
+def _parse_gurobi_version(path: Path) -> tuple[int, ...]:
+    match = re.search(r"gurobi(\d+)", path.name.lower())
+    if not match:
+        return (10**9,)
+    digits = match.group(1)
+    if len(digits) >= 3:
+        return (int(digits[:-2] or 0), int(digits[-2]), int(digits[-1]))
+    if len(digits) == 2:
+        return (int(digits[0]), int(digits[1]), 0)
+    return (int(digits), 0, 0)
+
+
+def _detect_gurobi_root() -> dict[str, Any]:
+    base = Path(r"C:\\")
+    candidates: list[Path] = []
+    try:
+        for path in base.iterdir():
+            if path.is_dir() and re.fullmatch(r"gurobi\d+", path.name.lower()):
+                candidates.append(path)
+    except Exception as exc:
+        return {"found": False, "root": "", "source": "", "error": str(exc)}
+
+    valid = [path for path in candidates if (path / "win64").is_dir()]
+    if not valid:
+        valid = candidates
+    if not valid:
+        return {"found": False, "root": "", "source": r"C:\gurobi*"}
+    ordered = sorted(valid, key=lambda p: (_parse_gurobi_version(p), p.name.lower()))
+    best = ordered[0]
+    return {
+        "found": True,
+        "root": str(best),
+        "source": r"C:\gurobi*",
+        "version": ".".join(str(v) for v in _parse_gurobi_version(best)),
+        "candidates": [str(path) for path in ordered],
+    }
+
+
+def _detect_abaqus_cmd() -> dict[str, Any]:
+    try:
+        result = subprocess.run(["where.exe", "abaqus"], capture_output=True, text=True, timeout=10)
+        if result.returncode == 0:
+            found_path = result.stdout.strip().splitlines()[0].strip()
+            if found_path:
+                return {"found": True, "abaqus_cmd": "abaqus", "source": f"PATH ({found_path})"}
+    except Exception:
+        pass
+
+    common = Path(r"C:\SIMULIA\Commands\abaqus.bat")
+    if common.is_file():
+        return {"found": True, "abaqus_cmd": str(common), "source": r"C:\SIMULIA\Commands"}
+
+    simulia = Path(r"C:\SIMULIA")
+    if simulia.is_dir():
+        for candidate in simulia.rglob("abaqus.bat"):
+            return {"found": True, "abaqus_cmd": str(candidate), "source": str(candidate.parent)}
+        for candidate in simulia.rglob("abaqus.cmd"):
+            return {"found": True, "abaqus_cmd": str(candidate), "source": str(candidate.parent)}
+
+    return {"found": False, "abaqus_cmd": None, "source": ""}
+
+
 @router.get("/detect-windows-python")
 async def detect_windows_python(save: bool = False) -> dict[str, Any]:
     candidates = await asyncio.to_thread(detect_windows_python_candidates)
@@ -96,6 +160,16 @@ async def detect_windows_python(save: bool = False) -> dict[str, Any]:
     if save:
         write_env_cfg({"windows_python_exe": best["executable"]})
     return {"found": True, "candidates": candidates, "best": best, "saved": bool(save)}
+
+
+@router.get("/detect-gurobi-root")
+async def detect_gurobi_root() -> dict[str, Any]:
+    return await asyncio.to_thread(_detect_gurobi_root)
+
+
+@router.get("/detect-abaqus")
+async def detect_abaqus() -> dict[str, Any]:
+    return await asyncio.to_thread(_detect_abaqus_cmd)
 
 
 @router.get("/detect-wsl-python")
@@ -143,6 +217,7 @@ async def install_missing_libraries() -> dict[str, Any]:
         results.append({"library": name, **await install_library(name)})
     return {
         "success": all(item.get("success") for item in results),
+        "message": "All supported libraries are already installed" if not results else "Supported library installation finished",
         "results": results,
         "success_count": sum(1 for item in results if item.get("success")),
         "total_count": len(results),
@@ -159,4 +234,17 @@ async def get_module_availability() -> dict[str, bool]:
         "visualization": "jaxmech.modules.visualization",
         "optimize_cvxpy": "jaxmech.optimize.cvxpy",
     }
-    return {key: find_spec(path) is not None for key, path in probes.items()}
+    availability = {key: find_spec(path) is not None for key, path in probes.items()}
+    availability.update(
+        {
+            "validation": False,
+            "direct_methods": False,
+            "direct_methods_steady_state": False,
+            "direct_methods_shakedown": False,
+            "shakedown_shell": False,
+            "shakedown_gurobi": False,
+            "plastic": False,
+            "topopt": False,
+        }
+    )
+    return availability

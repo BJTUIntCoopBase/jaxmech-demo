@@ -50,10 +50,6 @@ def _element_type_key(value: object) -> str:
     return text.strip().strip("'\"").upper()
 
 
-def _cell_types_1d(vd: VizData) -> np.ndarray:
-    return np.asarray(vd.cell_types, dtype=np.int32).reshape(-1)
-
-
 def build_grid(vd: VizData) -> "pv.UnstructuredGrid":
     """Create a ``pyvista.UnstructuredGrid`` from *vd*.
 
@@ -80,7 +76,7 @@ def build_grid(vd: VizData) -> "pv.UnstructuredGrid":
     if points.shape[1] == 2:
         points = np.hstack([points, np.zeros((points.shape[0], 1))])
 
-    grid = pv.UnstructuredGrid(vd.cells, _cell_types_1d(vd), points)
+    grid = pv.UnstructuredGrid(vd.cells, vd.cell_types, points)
     return grid
 
 
@@ -101,7 +97,7 @@ def _elem_offsets(vd: VizData) -> np.ndarray:
         )
         return ngpe
 
-    n_cells = int(_cell_types_1d(vd).shape[0])
+    n_cells = int(vd.cell_types.shape[0])
     return np.ones(n_cells, dtype=np.int32)
 
 
@@ -199,7 +195,7 @@ def gauss_to_nodal(field: np.ndarray, vd: VizData) -> np.ndarray:
     count = np.zeros(n_nodes, dtype=np.int32)
 
     cells = vd.cells
-    ctypes = _cell_types_1d(vd)
+    ctypes = vd.cell_types
     n_elem = ctypes.shape[0]
 
     pos = 0
@@ -229,7 +225,7 @@ def element_to_nodal(field: np.ndarray, vd: VizData) -> np.ndarray:
     count = np.zeros(n_nodes, dtype=np.int32)
 
     cells = vd.cells
-    ctypes = _cell_types_1d(vd)
+    ctypes = vd.cell_types
     n_elem = int(ctypes.shape[0])
     if arr.shape[0] < n_elem:
         arr = np.pad(arr, ((0, n_elem - arr.shape[0]), (0, 0)))
@@ -390,9 +386,15 @@ def _equivalent_strain_3(eps: np.ndarray) -> np.ndarray:
 
 def _classify_field_kind(field_key: Optional[str]) -> str:
     key = str(field_key or "").lower()
-    if "stress" in key:
+    if "peeq" in key:
+        return "scalar"
+    if "generalized_stress" in key or "generalized_strain" in key:
+        return "vector"
+    if key.startswith(("rsdms_sf_", "rsdms_sm_", "rsdms_ge_", "rsdms_gk_")):
+        return "vector"
+    if "stress" in key or key.startswith(("rsdms_s_res", "rsdms_s_tot", "rsdm_s_res", "rsdm_s_tot", "rsdm_xs_", "rsdms_xs_")):
         return "stress"
-    if "strain" in key:
+    if "strain" in key or key.startswith(("rsdms_e_res", "rsdms_e_tot", "rsdm_e_res", "rsdm_e_tot")):
         return "strain"
     if key in {"u", "frame_u", "elastic_u", "solid_u_nodal"} or "displacement" in key:
         return "vector"
@@ -401,7 +403,7 @@ def _classify_field_kind(field_key: Optional[str]) -> str:
         or "reaction" in key
         or "internal_force" in key
         or "force" in key
-        or key in {"shakedown_equality_violation"}
+        or key in {"rsdms_ceq", "rsdms_ferror", "rsdm_ceq", "rsdm_ferror"}
     ):
         return "vector"
     return "other"

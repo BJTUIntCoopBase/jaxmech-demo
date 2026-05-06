@@ -121,6 +121,14 @@ async def load_mat(req: LoadRequest):
     path = _resolve(req.mat_path)
     session = _get_session()
     try:
+        if req.slot != "b":
+            from jaxmech.modules.visualization.mat_reader import is_validation_mat
+            if is_validation_mat(path):
+                pair = session.load_validation_pair(str(path), selected_fields=req.selected_fields)
+                await _close_slot_ws("a", reason="Scene reloaded")
+                await _close_slot_ws("b", reason="Scene reloaded")
+                scene_a = pair.get("scene_a") or {}
+                return {"ok": True, **scene_a, **pair}
         if req.slot == "b":
             info = session.load_b(str(path), selected_fields=req.selected_fields)
         else:
@@ -224,6 +232,13 @@ async def screenshot(req: ScreenshotRequest):
 @router.post("/compare")
 async def set_compare(req: CompareRequest):
     session = _get_session()
+    if session.compare_locked and not req.enabled:
+        return {
+            "ok": False,
+            "compare_locked": True,
+            "detail": "Validation MAT uses locked embedded ODB A/B comparison.",
+            **session.info,
+        }
     if not req.enabled:
         session.close_b()
     session.set_compare_mode(req.enabled)

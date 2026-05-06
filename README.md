@@ -6,12 +6,14 @@ The runnable code is intentionally limited to:
 
 - 3D solid linear elastic `inc_analysis`
 - Solid lower-bound shakedown with the C formulation and CVXPY/Clarabel backend
-- Browser-based Web UI
-- MAT field visualization for elastic and shakedown results
+- Browser-based Web UI with the same layout as the full version
+- Full task management and MAT field visualization for elastic and shakedown results
 
-The Web UI keeps the full-version menu shape, but locked pages are only
-placeholders. Their analysis code and backend endpoints are not included in this
-demo repository.
+The Web UI keeps the full-version layout and menu shape. Unsupported analysis
+entries are locked in the frontend and their analysis code/backend runners are
+not included in this demo repository. The settings page also provides one-click
+environment detection and one-click installation of supported Windows Web
+libraries.
 
 ## Quick Start
 
@@ -71,7 +73,8 @@ Available in this repository:
 | --- | --- |
 | Solid elastic `inc_analysis` | Available |
 | Solid C-formulation shakedown with CVXPY | Available |
-| Web UI | Available |
+| Web UI | Available, full-version layout with locked unsupported entries |
+| Task management | Available |
 | MAT visualization | Available |
 | Shell analysis | Locked menu only |
 | Elastic-plastic incremental analysis | Locked menu only |
@@ -96,10 +99,10 @@ GPL-3.0. See [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICE
 
 - 三维实体单元线弹性 `inc_analysis`
 - 实体单元下限安定分析，C formulation，CVXPY/Clarabel backend
-- Web 端工作台
-- 弹性与 shakedown MAT 结果的场变量可视化
+- 与完整版布局一致的 Web 端工作台
+- 完整任务管理，以及弹性与 shakedown MAT 结果的场变量可视化
 
-Web 端保留完整版菜单结构，但锁定页面只作为占位说明；对应分析代码和后端入口不包含在 demo 仓库中。
+Web 端保留完整版布局和菜单结构。不支持的分析入口在前端锁定，对应分析代码和后端 runner 不包含在 demo 仓库中。设置页保留一键自动检测，并增加一键安装所有支持的 Windows Web 库。
 
 ## 快速开始
 
@@ -159,7 +162,8 @@ Config\start_web.bat
 | --- | --- |
 | 实体弹性 `inc_analysis` | 可用 |
 | 实体 C formulation + CVXPY shakedown | 可用 |
-| Web UI | 可用 |
+| Web UI | 可用，完整版布局，不支持入口加锁 |
+| 任务管理 | 可用 |
 | MAT 场变量可视化 | 可用 |
 | Shell 分析 | 仅锁定菜单 |
 | 弹塑性增量分析 | 仅锁定菜单 |

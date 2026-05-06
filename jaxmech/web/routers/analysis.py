@@ -36,6 +36,10 @@ class RunRequest(BaseModel):
     args: list[str] = []
 
 
+class DeleteTasksRequest(BaseModel):
+    ids: list[str] = []
+
+
 @router.post("/api/run")
 async def submit_task(body: RunRequest):
     """Submit a computation task (any module)."""
@@ -49,6 +53,11 @@ async def list_tasks(limit: int = 20):
     return task_manager.list_tasks(limit)
 
 
+@router.post("/api/tasks/delete")
+async def delete_tasks(body: DeleteTasksRequest):
+    return task_manager.delete_tasks(body.ids)
+
+
 @router.get("/api/tasks/{task_id}")
 async def get_task(task_id: str):
     task = task_manager.get_task(task_id)
@@ -56,7 +65,43 @@ async def get_task(task_id: str):
         return {"error": "Task not found"}
     result = task.to_dict()
     result["logs"] = task.logs
+    result["config"] = task_manager.task_config_snapshot(task)
     return result
+
+
+@router.post("/api/tasks/{task_id}/stop")
+async def stop_task(task_id: str):
+    result = await task_manager.stop_task(task_id)
+    if not result.get("ok"):
+        raise HTTPException(404, result.get("error", "Task not found"))
+    return result
+
+
+@router.post("/api/tasks/{task_id}/open-folder")
+async def open_task_folder(task_id: str):
+    task = task_manager.get_task(task_id)
+    if task is None or not task.task_dir:
+        raise HTTPException(404, "Task not found")
+    folder = Path(task.task_dir).resolve()
+    if not folder.is_dir():
+        raise HTTPException(404, f"Task folder not found: {folder}")
+    if folder != task_manager.task_root.resolve() and task_manager.task_root.resolve() not in folder.parents:
+        raise HTTPException(403, "Access denied")
+    subprocess.Popen(["explorer.exe", str(folder)])
+    return {"ok": True, "path": str(folder)}
+
+
+@router.get("/api/tasks/{task_id}/logs.txt")
+async def download_task_log(task_id: str):
+    task = task_manager.get_task(task_id)
+    if task is None:
+        raise HTTPException(404, "Task not found")
+    log_path = task_manager.rewrite_task_log_text(task)
+    return FileResponse(
+        str(log_path),
+        media_type="text/plain; charset=utf-8",
+        filename=f"{task.id}_run.log.txt",
+    )
 
 
 @router.get("/api/files")
@@ -98,7 +143,7 @@ async def task_logs_ws(websocket: WebSocket, task_id: str):
 
     # Do NOT replay historical logs — each page view starts with a clean console.
     # For a finished task, just send the final status so the UI can update the badge.
-    if task.status.value in ("success", "failed"):
+    if task.status.value in ("success", "failed", "stopped"):
         await websocket.send_json({
             "type": "status",
             "status": task.status.value,
@@ -124,7 +169,7 @@ async def task_logs_ws(websocket: WebSocket, task_id: str):
         while True:
             msg = await queue.get()
             await websocket.send_json(msg)
-            if msg.get("type") == "status" and msg.get("status") in ("success", "failed"):
+            if msg.get("type") == "status" and msg.get("status") in ("success", "failed", "stopped"):
                 break
     except WebSocketDisconnect:
         pass
