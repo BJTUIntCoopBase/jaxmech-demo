@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import subprocess
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
@@ -21,7 +22,10 @@ def _resolve_local_file_path(raw_path: str) -> Path:
         drive = path_text[5].upper()
         tail = path_text[7:].replace("/", "\\")
         path_text = f"{drive}:\\{tail}"
-    path = Path(path_text).resolve()
+    path = Path(path_text)
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    path = path.resolve()
     if path != PROJECT_ROOT and PROJECT_ROOT not in path.parents:
         raise HTTPException(403, f"Access denied: {raw_path}")
     return path
@@ -61,6 +65,25 @@ async def get_local_file(path: str):
     if not file_path.is_file():
         raise HTTPException(404, f"File not found: {path}")
     return FileResponse(str(file_path))
+
+
+@router.get("/api/files/exists")
+async def local_file_exists(path: str):
+    file_path = _resolve_local_file_path(path)
+    return {"exists": file_path.is_file(), "path": str(file_path)}
+
+
+@router.post("/api/files/open-folder")
+async def open_local_file_folder(path: str):
+    file_path = _resolve_local_file_path(path)
+    if file_path.is_file():
+        folder = file_path.parent
+    elif file_path.is_dir():
+        folder = file_path
+    else:
+        raise HTTPException(404, f"File not found: {path}")
+    subprocess.Popen(["explorer.exe", str(folder)])
+    return {"ok": True, "path": str(folder)}
 
 
 @router.websocket("/ws/tasks/{task_id}/logs")

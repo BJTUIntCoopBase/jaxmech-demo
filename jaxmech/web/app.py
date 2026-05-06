@@ -8,7 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from jaxmech.web.routers import status, models, config, analysis, docs, browse
+from jaxmech.web.routers import status, models, config, analysis, docs, browse, visualization
 
 STATIC_DIR = Path(__file__).parent / "static"
 TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -22,6 +22,7 @@ app.include_router(config.router)
 app.include_router(analysis.router)
 app.include_router(docs.router)
 app.include_router(browse.router)
+app.include_router(visualization.router)
 
 # Serve static files (CSS / JS / images)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

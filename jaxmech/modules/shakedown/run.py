@@ -21,6 +21,8 @@ def main() -> None:
 
     result = run_shakedown(Path(args.config), step=args.step)
     print(result.summary())
+    if result.summary_mat_path:
+        print(f"__ARTIFACT__|mat|{result.summary_mat_path}|Shakedown result MAT")
 
 
 if __name__ == "__main__":

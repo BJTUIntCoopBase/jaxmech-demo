@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/css/main.css?v=4" />
+  <link rel="stylesheet" href="/static/css/main.css?v=6" />
   <!-- MathJax 3: LaTeX 行内公式支持 \(...\) -->
   <script>
     window.MathJax = {
@@ -65,6 +65,13 @@
           </div>
           <div class="nav-item" data-page="direct-methods">
             <span class="nav-icon">∿</span> <span>Direct Methods</span>
+          </div>
+        </div>
+
+        <div class="nav-section">
+          <div class="nav-section-title">可视化</div>
+          <div class="nav-item" data-page="visualization">
+            <span class="nav-icon">🎨</span> <span>场变量可视化</span>
           </div>
         </div>
 
@@ -181,6 +188,13 @@
         </div>
       </div>
 
+      <!-- Visualization -->
+      <div id="page-visualization" class="page">
+        <div class="page-container viz-page-container">
+          <div id="viz-content"></div>
+        </div>
+      </div>
+
       <!-- Settings -->
       <div id="page-settings" class="page">
         <div class="page-container">
@@ -207,8 +221,8 @@
   </script>
   <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js" async></script>
   <!-- App scripts -->
-  <script src="/static/js/websocket.js?v=4"></script>
-  <script src="/static/js/components.js?v=4"></script>
-  <script src="/static/js/app.js?v=4"></script>
+  <script src="/static/js/websocket.js?v=6"></script>
+  <script src="/static/js/components.js?v=6"></script>
+  <script src="/static/js/app.js?v=6"></script>
 </body>
 </html>

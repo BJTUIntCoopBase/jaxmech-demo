@@ -54,6 +54,17 @@ def _normalize_top_level_payload(raw: dict) -> dict:
     return payload
 
 
+def _load_existing_payload(path: Path) -> dict:
+    if not path.is_file():
+        return {}
+    try:
+        return _normalize_top_level_payload(
+            sio.loadmat(str(path), squeeze_me=False, struct_as_record=False)
+        )
+    except Exception:
+        return {}
+
+
 def _payload_metadata_dict(payload: dict) -> dict[str, str]:
     metadata = _mat_struct_to_payload(payload.get("metadata"))
     if isinstance(metadata, dict):
@@ -292,12 +303,7 @@ def export_solid_elastic_result_mat(
         raise NotImplementedError("export_solid_elastic_result_mat currently supports solid models only.")
 
     out_path = Path(out_mat_path)
-    if out_path.is_file():
-        payload = _normalize_top_level_payload(
-            sio.loadmat(str(out_path), squeeze_me=False, struct_as_record=False)
-        )
-    else:
-        payload = {}
+    payload = _load_existing_payload(out_path)
     sidecar_payload = load_analysis_input_sidecar_payload(out_path)
     for key, value in sidecar_payload.items():
         if key == "metadata":
@@ -361,6 +367,10 @@ def export_solid_elastic_result_mat(
     }
     )
 
+    from jaxmech.model.viz_manifest import attach_viz_manifest
+    from jaxmech.modules.inc_analysis.visualize_mat import build_solid_elastic_viz_manifest
+
+    attach_viz_manifest(payload, build_solid_elastic_viz_manifest(payload))
     clean_payload = {k: v for k, v in payload.items() if v is not None}
     out_path.parent.mkdir(parents=True, exist_ok=True)
     sio.savemat(str(out_path), clean_payload, do_compression=True)
@@ -386,12 +396,7 @@ def export_shell_elastic_result_mat(
         raise ValueError("Shell MAT export requires AnalysisResult.shell recovery fields.")
 
     out_path = Path(out_mat_path)
-    if out_path.is_file():
-        payload = _normalize_top_level_payload(
-            sio.loadmat(str(out_path), squeeze_me=False, struct_as_record=False)
-        )
-    else:
-        payload = {}
+    payload = _load_existing_payload(out_path)
     sidecar_payload = load_analysis_input_sidecar_payload(out_path)
     for key, value in sidecar_payload.items():
         if key == "metadata":
@@ -448,6 +453,10 @@ def export_shell_elastic_result_mat(
         }
     )
 
+    from jaxmech.model.viz_manifest import attach_viz_manifest
+    from jaxmech.modules.inc_analysis.visualize_mat import build_shell_elastic_viz_manifest
+
+    attach_viz_manifest(payload, build_shell_elastic_viz_manifest(payload))
     clean_payload = {k: v for k, v in payload.items() if v is not None}
     out_path.parent.mkdir(parents=True, exist_ok=True)
     sio.savemat(str(out_path), clean_payload, do_compression=True)

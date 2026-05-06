@@ -117,6 +117,7 @@ const App = {
       case 'docs': return this.loadDocs();
       case 'settings': return this.loadSettings();
       case 'tasks': return this.loadTasks();
+      case 'visualization': return this.loadVisualization();
     }
   },
 
@@ -2720,6 +2721,18 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
     return `/api/files?path=${encodeURIComponent(path)}`;
   },
 
+  async openArtifactVisualization(path) {
+    const target = String(path || '').trim();
+    if (!target) return;
+    const exists = await this.api(`/api/files/exists?path=${encodeURIComponent(target)}`).catch((err) => ({ exists: false, detail: err?.message || '' }));
+    if (!exists?.exists) {
+      alert(`找不到可视化 MAT 文件，可能已移动到其它计算机或被手动删除。\n\n${target}`);
+      return;
+    }
+    this._vizSelectedPath = target;
+    this.navigate('visualization');
+  },
+
   _renderTaskArtifacts(artifacts) {
     if (!Array.isArray(artifacts) || artifacts.length === 0) return '';
     const cards = artifacts.map((artifact) => {
@@ -2733,9 +2746,18 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
           <div style="font-size:11px;color:var(--text-secondary);font-family:monospace;word-break:break-all">${path}</div>
         </div>`;
       }
+      const lowerKind = (artifact.kind || '').toLowerCase();
+      const lowerPath = String(artifact.path || '').toLowerCase();
+      const canVisualize = lowerKind === 'mat' || lowerPath.endsWith('.mat');
+      const vizButton = canVisualize
+        ? `<button class="btn btn-secondary" style="padding:6px 10px;font-size:12px" onclick="App.openArtifactVisualization('${UI.escapeAttr(artifact.path || '')}')">打开 visualization</button>`
+        : '';
       return `<div style="padding:14px;border-radius:10px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08)">
         <div style="font-size:13px;font-weight:600;margin-bottom:8px">${label}</div>
-        <a href="${url}" target="_blank" style="color:var(--accent);text-decoration:none;font-size:12px">打开文件</a>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <a href="${url}" target="_blank" style="color:var(--accent);text-decoration:none;font-size:12px">打开文件</a>
+          ${vizButton}
+        </div>
         <div style="font-size:11px;color:var(--text-secondary);font-family:monospace;word-break:break-all;margin-top:8px">${path}</div>
       </div>`;
     }).join('');
@@ -3423,7 +3445,2118 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
     alert(details);
   },
 
+  _viz: {
+    ws_a: null,
+    ws_b: null,
+    info_a: null,
+    info_b: null,
+    compareMode: false,
+    compareLocked: false,
+    dragging: false,
+    dragSlot: null,
+    lastX: 0,
+    lastY: 0,
+    dragButton: 0,
+    absoluteDiff: false,
+    diffPayload: null,
+    fieldModalSlot: 'a',
+    fieldSortKey: 'default',
+    fieldSortDir: 'asc',
+    models: [],
+    modelByKey: {},
+    matCache: {},
+    playTimers: {},
+    slotState: {
+      a: { modelKey: '', matPath: '', mats: [], family: '', quantityValue: '', inspect: null, selectedFields: [], sourceLocked: false },
+      b: { modelKey: '', matPath: '', mats: [], family: '', quantityValue: '', inspect: null, selectedFields: [], sourceLocked: false },
+    },
+  },
+
+  async loadVisualization() {
+    const el = document.getElementById('viz-content');
+    if (!el) return;
+    el.innerHTML = this._vizBuildHTML();
+    this._vizBindEvents();
+    await this._vizEnsureModels();
+    await this._vizInitModelSelectors();
+    this._vizSetSlotLoadedState('a', false);
+    this._vizSetSlotLoadedState('b', false);
+
+    if (this._vizSelectedPath) {
+      const targetPath = this._vizSelectedPath;
+      this._vizSelectedPath = '';
+      await this._vizHydrateSlotFromSource('a', targetPath);
+      await this._vizInspectSelectedMat('a', targetPath);
+      this._vizRenderSourceSummary();
+      return;
+    }
+
+    const info = await this.api('/api/viz/info').catch(() => null);
+    if (info && info.scene_a) {
+      this._viz.info_a = info.scene_a;
+      await this._vizHydrateSlotFromSource('a', info.scene_a.source);
+      this._vizUpdateControls('a');
+      this._vizConnectWs('a');
+      this._vizSetSlotLoadedState('a', true);
+    }
+    if (info && info.compare_mode && info.scene_b) {
+      this._viz.info_b = info.scene_b;
+      this._viz.compareMode = true;
+      this._viz.compareLocked = !!info.compare_locked;
+      await this._vizHydrateSlotFromSource('b', info.scene_b.source);
+      this._vizUpdateControls('b');
+      this._vizConnectWs('b');
+      this._vizSetSlotLoadedState('b', true);
+    } else if (info) {
+      this._viz.compareLocked = !!info.compare_locked;
+    }
+    this._vizShowCompare(this._viz.compareMode);
+    this._vizRenderSourceSummary();
+  },
+
+  _vizBuildHTML() {
+    return `
+      <div class="viz-layout">
+        <div class="viz-toolbar" id="viz-toolbar-a">
+          <div class="viz-group viz-source-group">
+            <span class="viz-group-label">模型 / 结果 A</span>
+            <div class="viz-source-picker" id="viz-source-picker-a">
+              <select id="viz-model-a" class="viz-model-select">
+                <option value="">加载中...</option>
+              </select>
+              <select id="viz-mat-a" class="viz-mat-select" disabled>
+                <option value="">选择 MAT 结果</option>
+              </select>
+              <button class="viz-btn" id="viz-mat-refresh-a" title="重新扫描 MAT 结果">刷新</button>
+              <button class="viz-btn" id="viz-browse-a" title="浏览 MAT 结果文件">浏览</button>
+              <button class="viz-btn primary" id="viz-load-a" title="检查当前 MAT 的场变量">选择MAT</button>
+            </div>
+            <div class="viz-source-current" id="viz-source-current-a" style="display:none">
+              <span class="viz-source-current-text" id="viz-source-current-text-a"></span>
+              <button class="viz-btn" id="viz-reselect-a" title="重新选择 MAT 结果">重选MAT</button>
+            </div>
+          </div>
+          <div class="viz-sep"></div>
+          <div class="viz-group">
+            <span class="viz-group-label">结果量</span>
+            <select id="viz-family-a" class="viz-field-family" disabled>
+              <option value="">类别</option>
+            </select>
+            <select id="viz-quantity-a" class="viz-field-select" disabled>
+              <option value="">结果量</option>
+            </select>
+            <span class="viz-field-map" id="viz-field-map-a"></span>
+          </div>
+          <div class="viz-sep"></div>
+          <div class="viz-group viz-action-group">
+            <button class="viz-btn" id="viz-edges-a" title="显示或隐藏网格边线">网格</button>
+            <button class="viz-btn" id="viz-overlay-a" title="显示或隐藏文件信息与坐标轴">信息</button>
+            <button class="viz-btn viz-frame-step" id="viz-frame-prev-a" title="上一帧" aria-label="上一帧"><span class="viz-icon viz-icon-prev" aria-hidden="true"></span></button>
+            <button class="viz-btn viz-frame-play" id="viz-frame-play-a" title="连续播放" aria-label="连续播放"><span class="viz-icon viz-icon-play" aria-hidden="true"></span></button>
+            <button class="viz-btn viz-frame-step" id="viz-frame-next-a" title="下一帧" aria-label="下一帧"><span class="viz-icon viz-icon-next" aria-hidden="true"></span></button>
+            <button class="viz-btn" id="viz-screenshot-a" title="导出 300 DPI PNG">截图</button>
+          </div>
+          <div class="viz-sep viz-row-break"></div>
+          <div class="viz-group viz-frame-group">
+            <span class="viz-group-label">帧</span>
+            <input type="range" id="viz-frame-slider-a" min="0" max="0" value="0" disabled>
+            <span class="viz-frame-display" id="viz-frame-label-a">1/1</span>
+            <button class="viz-btn viz-frame-detail" id="viz-frame-detail-a" title="" disabled>详见信息</button>
+          </div>
+          <div class="viz-sep"></div>
+          <div class="viz-group">
+            <span class="viz-group-label">视图</span>
+            <button class="viz-btn viz-view-btn" data-view="+x" data-slot="a">+X</button>
+            <button class="viz-btn viz-view-btn" data-view="-x" data-slot="a">-X</button>
+            <button class="viz-btn viz-view-btn" data-view="+y" data-slot="a">+Y</button>
+            <button class="viz-btn viz-view-btn" data-view="-y" data-slot="a">-Y</button>
+            <button class="viz-btn viz-view-btn" data-view="+z" data-slot="a">+Z</button>
+            <button class="viz-btn viz-view-btn" data-view="-z" data-slot="a">-Z</button>
+            <button class="viz-btn viz-view-btn" data-view="iso" data-slot="a">ISO</button>
+          </div>
+          <div class="viz-sep"></div>
+          <div class="viz-group">
+            <span class="viz-group-label">图例</span>
+            <input type="number" id="viz-clim-min-a" placeholder="min" step="any" style="width:70px">
+            <span style="color:var(--text-muted)">~</span>
+            <input type="number" id="viz-clim-max-a" placeholder="max" step="any" style="width:70px">
+            <button class="viz-btn" id="viz-clim-apply-a">应用</button>
+            <button class="viz-btn active" id="viz-clim-auto-a" title="锁定当前自动范围或恢复自动范围">自动</button>
+          </div>
+          <div class="viz-sep"></div>
+          <div class="viz-group viz-compare-toolbar" id="viz-compare-toolbar">
+            <span class="viz-group-label">对比</span>
+            <button class="viz-btn viz-compare-btn" id="viz-compare-toggle" title="切换 A/B 双栏对比">双栏对比</button>
+            <button class="viz-btn" id="viz-sync-camera" title="同步 A/B 视角和缩放大小" style="display:none">同步视角</button>
+            <button class="viz-btn" id="viz-diff-run" title="计算当前 A/B 显示标量的 Diff" style="display:none">对比</button>
+            <label class="viz-inline-check" id="viz-diff-absolute-wrap" style="display:none" title="勾选后计算 |B-A|，未勾选时计算 B-A">
+              <input type="checkbox" id="viz-diff-absolute">
+              <span>|B-A|</span>
+            </label>
+            <button class="viz-btn" id="viz-diff-boxplot" title="显示当前 Diff 的箱线图" style="display:none" disabled>箱线图</button>
+            <button class="viz-btn" id="viz-diff-save" title="将当前 Diff 下载为 MAT 文件" style="display:none" disabled>保存Diff</button>
+          </div>
+        </div>
+
+        <div class="viz-toolbar" id="viz-toolbar-b" style="display:none">
+          <div class="viz-group viz-source-group">
+            <span class="viz-group-label">模型 / 结果 B</span>
+            <div class="viz-source-picker" id="viz-source-picker-b">
+              <select id="viz-model-b" class="viz-model-select">
+                <option value="">加载中...</option>
+              </select>
+              <select id="viz-mat-b" class="viz-mat-select" disabled>
+                <option value="">选择 MAT 结果</option>
+              </select>
+              <button class="viz-btn" id="viz-mat-refresh-b" title="重新扫描 MAT 结果">刷新</button>
+              <button class="viz-btn" id="viz-browse-b" title="浏览 MAT 结果文件">浏览</button>
+              <button class="viz-btn primary" id="viz-load-b" title="检查当前 MAT 的场变量">选择MAT</button>
+            </div>
+            <div class="viz-source-current" id="viz-source-current-b" style="display:none">
+              <span class="viz-source-current-text" id="viz-source-current-text-b"></span>
+              <button class="viz-btn" id="viz-reselect-b" title="重新选择 MAT 结果">重选MAT</button>
+            </div>
+          </div>
+          <div class="viz-sep"></div>
+          <div class="viz-group">
+            <span class="viz-group-label">结果量</span>
+            <select id="viz-family-b" class="viz-field-family" disabled>
+              <option value="">类别</option>
+            </select>
+            <select id="viz-quantity-b" class="viz-field-select" disabled>
+              <option value="">结果量</option>
+            </select>
+            <span class="viz-field-map" id="viz-field-map-b"></span>
+          </div>
+          <div class="viz-sep"></div>
+          <div class="viz-group viz-action-group">
+            <button class="viz-btn" id="viz-edges-b" title="显示或隐藏网格边线">网格</button>
+            <button class="viz-btn" id="viz-overlay-b" title="显示或隐藏文件信息与坐标轴">信息</button>
+            <button class="viz-btn viz-frame-step" id="viz-frame-prev-b" title="上一帧" aria-label="上一帧"><span class="viz-icon viz-icon-prev" aria-hidden="true"></span></button>
+            <button class="viz-btn viz-frame-play" id="viz-frame-play-b" title="连续播放" aria-label="连续播放"><span class="viz-icon viz-icon-play" aria-hidden="true"></span></button>
+            <button class="viz-btn viz-frame-step" id="viz-frame-next-b" title="下一帧" aria-label="下一帧"><span class="viz-icon viz-icon-next" aria-hidden="true"></span></button>
+            <button class="viz-btn" id="viz-screenshot-b" title="导出 300 DPI PNG">截图</button>
+          </div>
+          <div class="viz-sep viz-row-break"></div>
+          <div class="viz-group viz-frame-group">
+            <span class="viz-group-label">帧</span>
+            <input type="range" id="viz-frame-slider-b" min="0" max="0" value="0" disabled>
+            <span class="viz-frame-display" id="viz-frame-label-b">1/1</span>
+            <button class="viz-btn viz-frame-detail" id="viz-frame-detail-b" title="" disabled>详见信息</button>
+          </div>
+          <div class="viz-sep"></div>
+          <div class="viz-group">
+            <span class="viz-group-label">视图</span>
+            <button class="viz-btn viz-view-btn" data-view="+x" data-slot="b">+X</button>
+            <button class="viz-btn viz-view-btn" data-view="-x" data-slot="b">-X</button>
+            <button class="viz-btn viz-view-btn" data-view="+y" data-slot="b">+Y</button>
+            <button class="viz-btn viz-view-btn" data-view="-y" data-slot="b">-Y</button>
+            <button class="viz-btn viz-view-btn" data-view="+z" data-slot="b">+Z</button>
+            <button class="viz-btn viz-view-btn" data-view="-z" data-slot="b">-Z</button>
+            <button class="viz-btn viz-view-btn" data-view="iso" data-slot="b">ISO</button>
+          </div>
+          <div class="viz-sep"></div>
+          <div class="viz-group">
+            <span class="viz-group-label">图例</span>
+            <input type="number" id="viz-clim-min-b" placeholder="min" step="any" style="width:70px">
+            <span style="color:var(--text-muted)">~</span>
+            <input type="number" id="viz-clim-max-b" placeholder="max" step="any" style="width:70px">
+            <button class="viz-btn" id="viz-clim-apply-b">应用</button>
+            <button class="viz-btn active" id="viz-clim-auto-b" title="锁定当前自动范围或恢复自动范围">自动</button>
+          </div>
+        </div>
+
+        <div class="viz-canvas-wrap">
+          <div class="viz-canvas-panel" id="viz-panel-a">
+            <span class="viz-panel-label">A</span>
+            <canvas id="viz-canvas-a" width="800" height="600"></canvas>
+            <div class="viz-math-overlay" id="viz-math-overlay-a" style="display:none"></div>
+            <div class="viz-empty" id="viz-empty-a"></div>
+          </div>
+          <div class="viz-canvas-panel" id="viz-panel-b" style="display:none">
+            <span class="viz-panel-label">B</span>
+            <canvas id="viz-canvas-b" width="800" height="600"></canvas>
+            <div class="viz-math-overlay" id="viz-math-overlay-b" style="display:none"></div>
+            <div class="viz-empty" id="viz-empty-b"></div>
+          </div>
+        </div>
+
+        <div class="viz-status-bar" id="viz-status-bar">
+          <span id="viz-status-text">就绪</span>
+          <span class="viz-status-chip" id="viz-source-a" style="margin-left:auto;display:none"></span>
+          <span class="viz-status-chip" id="viz-source-b" style="display:none"></span>
+        </div>
+
+        <div class="viz-modal" id="viz-boxplot-modal" style="display:none">
+          <div class="viz-modal-backdrop" id="viz-boxplot-backdrop"></div>
+          <div class="viz-modal-card">
+            <div class="viz-modal-header">
+              <div>
+                <div class="viz-modal-title">差值箱线图</div>
+                <div class="viz-modal-subtitle" id="viz-boxplot-subtitle"></div>
+              </div>
+              <div class="viz-modal-actions">
+                <button class="viz-btn" id="viz-boxplot-screenshot">截图</button>
+                <button class="viz-btn" id="viz-boxplot-close">关闭</button>
+              </div>
+            </div>
+            <div class="viz-boxplot-wrap">
+              <svg id="viz-boxplot-svg" viewBox="0 0 820 240" preserveAspectRatio="xMidYMid meet"></svg>
+            </div>
+            <div class="viz-boxplot-stats" id="viz-boxplot-stats"></div>
+          </div>
+        </div>
+
+        <div class="viz-modal" id="viz-field-modal" style="display:none">
+          <div class="viz-modal-backdrop" id="viz-field-backdrop"></div>
+          <div class="viz-modal-card viz-field-modal-card">
+            <div class="viz-modal-header">
+              <div>
+                <div class="viz-modal-title">选择场变量</div>
+                <div class="viz-modal-subtitle" id="viz-field-subtitle"></div>
+              </div>
+              <button class="viz-btn" id="viz-field-close">关闭</button>
+            </div>
+            <div class="viz-field-toolbar">
+              <button class="viz-btn" id="viz-field-defaults">默认变量</button>
+              <button class="viz-btn" id="viz-field-all">全选</button>
+              <button class="viz-btn" id="viz-field-clear">清空</button>
+              <span class="viz-field-count" id="viz-field-count"></span>
+            </div>
+            <div class="viz-field-list" id="viz-field-list"></div>
+            <div class="viz-field-actions">
+              <button class="viz-btn" id="viz-field-cancel">取消</button>
+              <button class="viz-btn primary" id="viz-field-confirm">开始可视化</button>
+            </div>
+          </div>
+        </div>
+      </div>`;
+  },
+
+  _vizBindEvents() {
+    ['a', 'b'].forEach(slot => {
+      document.getElementById(`viz-model-${slot}`)?.addEventListener('change', async (e) => {
+        const state = this._vizGetSlotState(slot);
+        state.modelKey = e.target.value || '';
+        state.matPath = '';
+        state.inspect = null;
+        state.selectedFields = [];
+        state.sourceLocked = false;
+        this._vizSetSlotLoadedState(slot, false);
+        await this._vizRefreshMatOptions(slot, { force: false });
+        this._vizRenderSourceSummary();
+      });
+
+      document.getElementById(`viz-mat-${slot}`)?.addEventListener('change', (e) => {
+        const state = this._vizGetSlotState(slot);
+        state.matPath = e.target.value || '';
+        state.inspect = null;
+        state.selectedFields = [];
+      });
+
+      document.getElementById(`viz-mat-refresh-${slot}`)?.addEventListener('click', () => {
+        this._vizRefreshMatOptions(slot, { force: true });
+      });
+
+      document.getElementById(`viz-browse-${slot}`)?.addEventListener('click', () => {
+        this._vizBrowseMat(slot);
+      });
+
+      document.getElementById(`viz-load-${slot}`)?.addEventListener('click', () => {
+        this._vizInspectSelectedMat(slot);
+      });
+
+      document.getElementById(`viz-reselect-${slot}`)?.addEventListener('click', () => {
+        const state = this._vizGetSlotState(slot);
+        state.sourceLocked = false;
+        this._vizSetSlotLoadedState(slot, false);
+      });
+
+      document.getElementById(`viz-family-${slot}`)?.addEventListener('change', (e) => {
+        const state = this._vizGetSlotState(slot);
+        state.family = e.target.value || '';
+        state.quantityValue = '';
+        this._vizPopulateFieldSelectors(slot, { preferState: true });
+        const qtySel = document.getElementById(`viz-quantity-${slot}`);
+        if (qtySel && qtySel.value) {
+          this._vizApplyFieldSelection(slot, qtySel.value);
+        }
+      });
+
+      document.getElementById(`viz-quantity-${slot}`)?.addEventListener('change', (e) => {
+        const value = e.target.value || '';
+        const state = this._vizGetSlotState(slot);
+        state.quantityValue = value;
+        this._vizApplyFieldSelection(slot, value);
+      });
+
+      document.getElementById(`viz-frame-slider-${slot}`)?.addEventListener('input', e => {
+        const frame = parseInt(e.target.value);
+        this._vizSetFrame(slot, frame);
+      });
+
+      document.getElementById(`viz-clim-apply-${slot}`)?.addEventListener('click', () => {
+        const vmin = parseFloat(document.getElementById(`viz-clim-min-${slot}`).value);
+        const vmax = parseFloat(document.getElementById(`viz-clim-max-${slot}`).value);
+        document.getElementById(`viz-clim-auto-${slot}`)?.classList.remove('active');
+        this._vizSendWs(slot, {
+          action: 'set_legend',
+          vmin: isNaN(vmin) ? null : vmin,
+          vmax: isNaN(vmax) ? null : vmax,
+        });
+      });
+
+      document.getElementById(`viz-clim-auto-${slot}`)?.addEventListener('click', () => {
+        const btn = document.getElementById(`viz-clim-auto-${slot}`);
+        const info = slot === 'a' ? this._viz.info_a : this._viz.info_b;
+        const ac = info?.auto_clim;
+        const minEl = document.getElementById(`viz-clim-min-${slot}`);
+        const maxEl = document.getElementById(`viz-clim-max-${slot}`);
+        const wasAuto = !!btn?.classList.contains('active');
+        if (wasAuto) {
+          const vmin = parseFloat(minEl?.value || (Array.isArray(ac) ? ac[0] : ''));
+          const vmax = parseFloat(maxEl?.value || (Array.isArray(ac) ? ac[1] : ''));
+          btn?.classList.remove('active');
+          this._vizSendWs(slot, {
+            action: 'set_legend',
+            vmin: isNaN(vmin) ? null : vmin,
+            vmax: isNaN(vmax) ? null : vmax,
+          });
+          return;
+        }
+        btn?.classList.add('active');
+        this._vizSendWs(slot, {action: 'set_legend', vmin: null, vmax: null});
+        if (ac && Array.isArray(ac) && minEl && maxEl) {
+          minEl.value = ac[0];
+          maxEl.value = ac[1];
+        } else if (minEl && maxEl) {
+          minEl.value = '';
+          maxEl.value = '';
+        }
+      });
+
+      document.getElementById(`viz-frame-prev-${slot}`)?.addEventListener('click', () => {
+        this._vizStepFrame(slot, -1);
+      });
+
+      document.getElementById(`viz-frame-next-${slot}`)?.addEventListener('click', () => {
+        this._vizStepFrame(slot, 1);
+      });
+
+      document.getElementById(`viz-frame-play-${slot}`)?.addEventListener('click', () => {
+        this._vizTogglePlayback(slot);
+      });
+
+      document.getElementById(`viz-frame-detail-${slot}`)?.addEventListener('click', () => {
+        this._vizShowFrameDetail(slot);
+      });
+
+      const edgeBtn = document.getElementById(`viz-edges-${slot}`);
+      if (edgeBtn) {
+        edgeBtn._on = false;
+        edgeBtn.addEventListener('click', () => {
+          edgeBtn._on = !edgeBtn._on;
+          edgeBtn.classList.toggle('active', edgeBtn._on);
+          this._vizSendWs(slot, {action: 'show_edges', show: edgeBtn._on});
+        });
+      }
+
+      const overlayBtn = document.getElementById(`viz-overlay-${slot}`);
+      if (overlayBtn) {
+        overlayBtn._on = false;
+        overlayBtn.addEventListener('click', () => {
+          overlayBtn._on = !overlayBtn._on;
+          overlayBtn.classList.toggle('active', overlayBtn._on);
+          const info = this._vizSlotInfo(slot);
+          if (info) {
+            info.show_overlay = overlayBtn._on;
+            this._vizSetSlotInfo(slot, info);
+            this._vizUpdateMathOverlay(slot);
+          }
+          this._vizSendWs(slot, {action: 'show_overlay', show: overlayBtn._on});
+        });
+      }
+
+      document.getElementById(`viz-screenshot-${slot}`)?.addEventListener('click', () => {
+        this._vizDownloadScreenshot(slot);
+      });
+    });
+
+    document.querySelectorAll('.viz-view-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const slot = btn.dataset.slot || 'a';
+        this._vizSendWs(slot, {action: 'set_view', preset: btn.dataset.view});
+      });
+    });
+
+    document.getElementById('viz-compare-toggle')?.addEventListener('click', async () => {
+      if (this._viz.compareLocked) {
+        this._viz.compareMode = true;
+        this._vizShowCompare(true);
+        this._vizSetStatus('Validation 结果固定使用 JAX / ABAQUS 双栏对比。');
+        return;
+      }
+      const enabled = !this._viz.compareMode;
+      this._viz.compareMode = enabled;
+      this._vizShowCompare(enabled);
+      const res = await this.apiPost('/api/viz/compare', {enabled}).catch(() => null);
+      if (res?.compare_locked) {
+        this._viz.compareLocked = true;
+        this._viz.compareMode = true;
+        this._vizShowCompare(true);
+        this._vizSetStatus('Validation 结果固定使用 JAX / ABAQUS 双栏对比。');
+        return;
+      }
+      if (!enabled) {
+        this._vizStopPlayback('b');
+        if (this._viz.ws_b) {
+          try { this._viz.ws_b.close(); } catch (_) {}
+          this._viz.ws_b = null;
+        }
+        this._viz.info_b = null;
+        const emptyEl = document.getElementById('viz-empty-b');
+        if (emptyEl) {
+          emptyEl.style.display = '';
+          emptyEl.textContent = '';
+        }
+        const canvas = document.getElementById('viz-canvas-b');
+        if (canvas) {
+          const ctx = canvas.getContext('2d');
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+        this._vizHideBoxplot();
+      } else if (res && res.scene_b) {
+        this._viz.info_b = res.scene_b;
+        this._vizUpdateControls('b');
+        this._vizConnectWs('b');
+      }
+      this._vizRenderSourceSummary();
+    });
+
+    const syncBtn = document.getElementById('viz-sync-camera');
+    if (syncBtn) {
+      syncBtn._on = false;
+      syncBtn.addEventListener('click', () => {
+        syncBtn._on = !syncBtn._on;
+        syncBtn.classList.toggle('active', syncBtn._on);
+        this.apiPost('/api/viz/sync-camera', {enabled: syncBtn._on}).catch(() => {});
+      });
+    }
+
+    document.getElementById('viz-diff-absolute')?.addEventListener('change', (e) => {
+      this._viz.absoluteDiff = !!e.target.checked;
+      this._vizRefreshCompareButtons();
+    });
+
+    document.getElementById('viz-diff-boxplot')?.addEventListener('click', () => {
+      this._vizOpenDiffBoxplot();
+    });
+
+    document.getElementById('viz-diff-run')?.addEventListener('click', () => {
+      this._vizRunDiff();
+    });
+
+    document.getElementById('viz-diff-save')?.addEventListener('click', () => {
+      this._vizSaveDiffMat();
+    });
+    document.getElementById('viz-boxplot-screenshot')?.addEventListener('click', () => {
+      this._vizDownloadBoxplotScreenshot();
+    });
+    document.getElementById('viz-boxplot-close')?.addEventListener('click', () => {
+      this._vizHideBoxplot();
+    });
+    document.getElementById('viz-boxplot-backdrop')?.addEventListener('click', () => {
+      this._vizHideBoxplot();
+    });
+
+    document.getElementById('viz-field-close')?.addEventListener('click', () => this._vizShowFieldModal(false));
+    document.getElementById('viz-field-cancel')?.addEventListener('click', () => this._vizShowFieldModal(false));
+    document.getElementById('viz-field-backdrop')?.addEventListener('click', () => this._vizShowFieldModal(false));
+    document.getElementById('viz-field-defaults')?.addEventListener('click', () => this._vizSetFieldChecks('defaults'));
+    document.getElementById('viz-field-all')?.addEventListener('click', () => this._vizSetFieldChecks('all'));
+    document.getElementById('viz-field-clear')?.addEventListener('click', () => this._vizSetFieldChecks('none'));
+    document.getElementById('viz-field-confirm')?.addEventListener('click', () => this._vizConfirmFieldSelection());
+
+    ['a', 'b'].forEach(slot => {
+      const canvas = document.getElementById(`viz-canvas-${slot}`);
+      if (!canvas) return;
+      canvas.addEventListener('contextmenu', e => e.preventDefault());
+      canvas.addEventListener('mousedown', e => {
+        this._viz.dragging = true;
+        this._viz.dragSlot = slot;
+        this._viz.lastX = e.clientX;
+        this._viz.lastY = e.clientY;
+        this._viz.dragButton = e.button;
+      });
+      canvas.addEventListener('wheel', e => {
+        e.preventDefault();
+        const factor = e.deltaY < 0 ? 1.1 : 0.9;
+        this._vizSendWs(slot, {action: 'zoom', factor});
+      }, {passive: false});
+    });
+
+    document.addEventListener('mousemove', e => {
+      if (!this._viz.dragging) return;
+      const dx = e.clientX - this._viz.lastX;
+      const dy = e.clientY - this._viz.lastY;
+      this._viz.lastX = e.clientX;
+      this._viz.lastY = e.clientY;
+      const slot = this._viz.dragSlot || 'a';
+      if (this._viz.dragButton === 2) {
+        this._vizSendWs(slot, {action: 'pan', dx, dy});
+      } else {
+        this._vizSendWs(slot, {action: 'orbit', dx, dy});
+      }
+    });
+
+    document.addEventListener('mouseup', () => {
+      this._viz.dragging = false;
+    });
+  },
+
+  async _vizEnsureModels() {
+    const models = Array.isArray(this.models) && this.models.length
+      ? this.models
+      : await this.api('/api/models').catch(() => []);
+    this.models = Array.isArray(models) ? models : [];
+    this._viz.models = this.models;
+    this._viz.modelByKey = {};
+    this._viz.models.forEach(model => {
+      this._viz.modelByKey[this._vizModelKey(model)] = model;
+    });
+    return this._viz.models;
+  },
+
+  _vizModelKey(model) {
+    return model ? `${model.source}/${model.name}` : '';
+  },
+
+  _vizGetSlotState(slot) {
+    return this._viz.slotState[slot] || this._viz.slotState.a;
+  },
+
+  _vizGetModelByKey(modelKey) {
+    return this._viz.modelByKey[modelKey] || null;
+  },
+
+  _vizGetDefaultModelKey(slot) {
+    if (slot === 'a' && this.selectedModel) {
+      const current = this._vizModelKey(this.selectedModel);
+      if (current && this._vizGetModelByKey(current)) return current;
+    }
+    if (slot === 'b') {
+      const slotAKey = this._vizGetSlotState('a').modelKey;
+      if (slotAKey && this._vizGetModelByKey(slotAKey)) return slotAKey;
+    }
+    return this._viz.models[0] ? this._vizModelKey(this._viz.models[0]) : '';
+  },
+
+  async _vizInitModelSelectors() {
+    ['a', 'b'].forEach(slot => {
+      const state = this._vizGetSlotState(slot);
+      if (!state.modelKey) state.modelKey = this._vizGetDefaultModelKey(slot);
+      this._vizPopulateModelSelect(slot);
+    });
+    await Promise.all(['a', 'b'].map(slot => this._vizRefreshMatOptions(slot, { force: false })));
+  },
+
+  _vizPopulateModelSelect(slot) {
+    const sel = document.getElementById(`viz-model-${slot}`);
+    if (!sel) return;
+    const state = this._vizGetSlotState(slot);
+    if (!this._viz.models.length) {
+      sel.innerHTML = '<option value="">未找到模型</option>';
+      sel.disabled = true;
+      return;
+    }
+    const options = this._viz.models.map(model => {
+      const value = this._vizModelKey(model);
+      const sourceLabel = model.source === 'stored' ? 'StoredModels' : 'Examples';
+      const selected = value === state.modelKey ? 'selected' : '';
+      return `<option value="${UI.escapeAttr(value)}" ${selected}>${UI.escapeHtml(sourceLabel)} / ${UI.escapeHtml(model.name)}</option>`;
+    }).join('');
+    sel.innerHTML = `<option value="">选择模型</option>${options}`;
+    sel.disabled = false;
+    if (state.modelKey) sel.value = state.modelKey;
+  },
+
+  _vizPopulateMatSelect(slot) {
+    const sel = document.getElementById(`viz-mat-${slot}`);
+    if (!sel) return;
+    const state = this._vizGetSlotState(slot);
+    const mats = Array.isArray(state.mats) ? state.mats : [];
+    if (!mats.length) {
+      sel.innerHTML = '<option value="">未找到 MAT 结果</option>';
+      sel.disabled = true;
+      return;
+    }
+    const options = mats.map(mat => {
+      const display = mat.rel_path || mat.name || mat.abs_path;
+      const selected = this._normalizeWinPath(mat.abs_path) === this._normalizeWinPath(state.matPath) ? 'selected' : '';
+      return `<option value="${UI.escapeAttr(mat.abs_path)}" ${selected}>${UI.escapeHtml(display)}</option>`;
+    }).join('');
+    sel.innerHTML = `<option value="">选择 MAT 结果</option>${options}`;
+    sel.disabled = false;
+    if (state.matPath) sel.value = state.matPath;
+  },
+
+  async _vizRefreshMatOptions(slot, { force = false, preferPath = '' } = {}) {
+    const state = this._vizGetSlotState(slot);
+    const sel = document.getElementById(`viz-mat-${slot}`);
+    if (sel) {
+      sel.innerHTML = '<option value="">正在扫描 MAT 结果...</option>';
+      sel.disabled = true;
+    }
+    const model = this._vizGetModelByKey(state.modelKey);
+    if (!model) {
+      state.mats = [];
+      state.matPath = '';
+      this._vizPopulateMatSelect(slot);
+      return;
+    }
+    if (force || !this._viz.matCache[state.modelKey]) {
+      const scanRes = await this.apiPost('/api/models/scan-mats', { model_path: model.path }).catch(() => null);
+      this._viz.matCache[state.modelKey] = Array.isArray(scanRes?.mat_files) ? scanRes.mat_files : [];
+    }
+    state.mats = this._viz.matCache[state.modelKey] || [];
+    if (preferPath) {
+      const matched = this._vizMatchMatPath(state.mats, preferPath);
+      if (matched) state.matPath = matched.abs_path;
+    }
+    if (!state.matPath || !this._vizMatchMatPath(state.mats, state.matPath)) {
+      state.matPath = state.mats[0]?.abs_path || '';
+    }
+    this._vizPopulateMatSelect(slot);
+  },
+
+  async _vizHydrateSlotFromSource(slot, sourcePath) {
+    const normalizedSource = this._normalizeWinPath(sourcePath);
+    if (!normalizedSource || !this._viz.models.length) return;
+    const matchedModel = this._viz.models.find(model => {
+      const modelRoot = this._normalizeWinPath(model.path);
+      return normalizedSource === modelRoot || normalizedSource.startsWith(`${modelRoot}\\`);
+    });
+    if (!matchedModel) return;
+    const state = this._vizGetSlotState(slot);
+    state.modelKey = this._vizModelKey(matchedModel);
+    this._vizPopulateModelSelect(slot);
+    await this._vizRefreshMatOptions(slot, { force: false, preferPath: normalizedSource });
+  },
+
+  _vizMatchMatPath(mats, targetPath) {
+    const normalizedTarget = this._normalizeWinPath(targetPath);
+    return (Array.isArray(mats) ? mats : []).find(item => this._normalizeWinPath(item.abs_path) === normalizedTarget) || null;
+  },
+
+  _vizPathBelongsToModel(path, modelPath) {
+    const target = this._normalizeWinPath(path);
+    const root = this._normalizeWinPath(modelPath);
+    return !!target && !!root && (target === root || target.startsWith(`${root}\\`));
+  },
+
+  _vizSetSlotLoadedState(slot, loaded) {
+    const toolbar = document.getElementById(`viz-toolbar-${slot}`);
+    const picker = document.getElementById(`viz-source-picker-${slot}`);
+    const current = document.getElementById(`viz-source-current-${slot}`);
+    const currentText = document.getElementById(`viz-source-current-text-${slot}`);
+    const state = this._vizGetSlotState(slot);
+    state.sourceLocked = !!loaded;
+    if (picker) picker.style.display = loaded ? 'none' : 'inline-flex';
+    if (current) current.style.display = loaded ? 'inline-flex' : 'none';
+    if (currentText) {
+      const model = this._vizGetModelByKey(state.modelKey);
+      const modelText = model ? model.name : 'No model';
+      currentText.textContent = `${slot.toUpperCase()} · ${modelText} · ${this._vizBasename(state.matPath)}`;
+      currentText.title = state.matPath || '';
+    }
+    if (toolbar) {
+      Array.from(toolbar.children).forEach((child, index) => {
+        if (index === 0) return;
+        child.style.display = loaded ? '' : 'none';
+      });
+    }
+  },
+
+  async _vizInspectSelectedMat(slot, overridePath = '') {
+    const state = this._vizGetSlotState(slot);
+    const path = overridePath || state.matPath;
+    if (!path) {
+      this._vizSetStatus('请先选择 MAT 结果文件。');
+      return;
+    }
+    state.matPath = path;
+    this._vizSetStatus(`正在读取场变量目录 ${slot.toUpperCase()}...`);
+    const res = await this.apiPost('/api/viz/inspect', { mat_path: path }).catch(() => null);
+    if (!res || !res.ok) {
+      this._vizSetStatus(`读取 MAT 变量失败：${res?.detail || '未知错误'}`);
+      return;
+    }
+    state.inspect = res;
+    state.selectedFields = (res.fields || []).filter(item => item.default_selected).map(item => item.key);
+    this._viz.fieldModalSlot = slot;
+    this._vizRenderFieldModal();
+    this._vizShowFieldModal(true);
+    this._vizSetStatus(`已读取 ${res.fields?.length || 0} 个候选场变量`);
+  },
+
+  async _vizLoadSelectedMat(slot, overridePath = '', selectedFields = null) {
+    this._vizStopPlayback(slot);
+    const state = this._vizGetSlotState(slot);
+    const path = overridePath || state.matPath;
+    if (!path) {
+      this._vizSetStatus('请先选择 MAT 结果文件。');
+      return;
+    }
+    const fields = Array.isArray(selectedFields) ? selectedFields : state.selectedFields;
+    if (!fields || !fields.length) {
+      this._vizSetStatus('请至少选择一个场变量。');
+      return;
+    }
+    this._vizSetStatus(`正在加载场景 ${slot.toUpperCase()}...`);
+    const res = await this.apiPost('/api/viz/load', { mat_path: path, slot, selected_fields: fields }).catch(() => null);
+    if (!res || !res.ok) {
+      this._vizSetStatus(`加载失败：${res?.detail || '未知错误'}`);
+      return;
+    }
+    state.selectedFields = fields;
+    state.family = '';
+    state.quantityValue = '';
+    if (slot === 'a') {
+      this._viz.info_a = res.validation_compare && res.scene_a ? res.scene_a : res;
+      this._viz.compareLocked = !!res.compare_locked;
+      this._vizUpdateControls('a');
+      this._vizConnectWs('a');
+      if (res.validation_compare && res.scene_b) {
+        this._viz.info_b = res.scene_b;
+        this._viz.compareMode = true;
+        this._vizShowCompare(true);
+        const stateB = this._vizGetSlotState('b');
+        stateB.matPath = res.scene_b.source || path;
+        stateB.selectedFields = Array.isArray(res.scene_b.fields) ? res.scene_b.fields : [];
+        stateB.family = '';
+        stateB.quantityValue = '';
+        await this._vizHydrateSlotFromSource('b', res.scene_b.source || path);
+        this._vizPopulateMatSelect('b');
+        this._vizSetSlotLoadedState('b', true);
+        this._vizUpdateControls('b');
+        this._vizConnectWs('b');
+      } else {
+        this._viz.compareLocked = false;
+      }
+    } else {
+      this._viz.info_b = res;
+      this._viz.compareLocked = false;
+      this._viz.compareMode = true;
+      this._vizShowCompare(true);
+      this._vizUpdateControls('b');
+      this._vizConnectWs('b');
+    }
+    await this._vizHydrateSlotFromSource(slot, res.source || path);
+    const refreshedState = this._vizGetSlotState(slot);
+    refreshedState.matPath = res.source || path;
+    this._vizPopulateMatSelect(slot);
+    this._vizSetSlotLoadedState(slot, true);
+    this._vizRenderSourceSummary();
+    this._vizSetStatus(`场景 ${slot.toUpperCase()} 已加载`);
+  },
+
+  _vizShowFieldModal(show) {
+    const modal = document.getElementById('viz-field-modal');
+    if (!modal) return;
+    modal.style.display = show ? 'flex' : 'none';
+  },
+
+  _vizFieldSortItems(fields) {
+    const sort = this._viz.fieldSortKey || 'default';
+    const dir = this._viz.fieldSortDir === 'desc' ? -1 : 1;
+    const arr = [...(fields || [])];
+    const text = item => String(item.key || '').toLowerCase();
+    const orderMap = (values, value) => {
+      const idx = values.indexOf(String(value || ''));
+      return idx < 0 ? values.length : idx;
+    };
+    const cmpText = (a, b) => text(a).localeCompare(text(b));
+    const cmpShape = (a, b) => {
+      const size = item => (item.shape || []).reduce((acc, v) => acc * Math.max(1, Number(v) || 1), 1);
+      return size(a) - size(b);
+    };
+    arr.sort((a, b) => {
+      let result = 0;
+      if (sort === 'family') {
+        result = orderMap(['stress', 'strain', 'displacement', 'force', 'other'], a.family) - orderMap(['stress', 'strain', 'displacement', 'force', 'other'], b.family) || cmpText(a, b);
+      } else if (sort === 'location') {
+        result = orderMap(['node', 'element', 'gauss', 'unknown'], a.location) - orderMap(['node', 'element', 'gauss', 'unknown'], b.location) || cmpText(a, b);
+      } else if (sort === 'frames') {
+        result = orderMap(['single', 'frames'], a.frames) - orderMap(['single', 'frames'], b.frames) || cmpText(a, b);
+      } else if (sort === 'tensor') {
+        result = orderMap(['stress_voigt', 'strain_voigt', 'vector', 'scalar', 'components'], a.tensor_kind) - orderMap(['stress_voigt', 'strain_voigt', 'vector', 'scalar', 'components'], b.tensor_kind) || cmpText(a, b);
+      } else if (sort === 'symbol') {
+        result = String(a.symbol || '').localeCompare(String(b.symbol || '')) || cmpText(a, b);
+      } else if (sort === 'shape') {
+        result = cmpShape(a, b) || cmpText(a, b);
+      } else if (sort === 'name') {
+        result = cmpText(a, b);
+      } else {
+        result = Number(!a.default_selected) - Number(!b.default_selected)
+          || orderMap(['stress', 'strain', 'displacement', 'force', 'other'], a.family) - orderMap(['stress', 'strain', 'displacement', 'force', 'other'], b.family)
+          || cmpText(a, b);
+      }
+      return sort === 'default' ? result : result * dir;
+    });
+    return arr;
+  },
+
+  _vizSetFieldSort(key) {
+    const next = key || 'default';
+    if (this._viz.fieldSortKey === next && next !== 'default') {
+      this._viz.fieldSortDir = this._viz.fieldSortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+      this._viz.fieldSortKey = next;
+      this._viz.fieldSortDir = 'asc';
+    }
+    this._vizRenderFieldModal();
+  },
+
+  _vizSortHeader(key, label) {
+    const active = this._viz.fieldSortKey === key;
+    const arrow = active ? (this._viz.fieldSortDir === 'desc' ? ' ↓' : ' ↑') : '';
+    return `<button type="button" class="viz-field-sort-btn ${active ? 'active' : ''}" data-sort="${UI.escapeAttr(key)}">${UI.escapeHtml(label)}${arrow}</button>`;
+  },
+
+  _vizRenderFieldTableHeader(fields, selected) {
+    const allChecked = fields.length > 0 && fields.every(item => selected.has(item.key));
+    return `
+      <div class="viz-field-table-head">
+        <label class="viz-field-head-check">
+          <input type="checkbox" id="viz-field-check-all" ${allChecked ? 'checked' : ''}>
+        </label>
+        <div>${this._vizSortHeader('name', '名称')}</div>
+        <div>${this._vizSortHeader('location', '位置')}</div>
+        <div>${this._vizSortHeader('frames', '帧')}</div>
+        <div>${this._vizSortHeader('tensor', '类型')}</div>
+        <div>${this._vizSortHeader('family', '物理量')}</div>
+        <div>${this._vizSortHeader('symbol', '符号')}</div>
+        <div>${this._vizSortHeader('shape', 'Shape')}</div>
+        <div>${this._vizSortHeader('default', '默认')}</div>
+      </div>`;
+  },
+
+  _vizBindFieldTableEvents() {
+    document.querySelectorAll('#viz-field-list .viz-field-sort-btn').forEach(btn => {
+      btn.addEventListener('click', () => this._vizSetFieldSort(btn.dataset.sort || 'default'));
+    });
+    document.getElementById('viz-field-check-all')?.addEventListener('change', e => {
+      this._vizSetFieldChecks(e.target.checked ? 'all' : 'none');
+    });
+    document.querySelectorAll('#viz-field-list .viz-field-check').forEach(input => {
+      input.addEventListener('change', () => this._vizStoreFieldChecks());
+    });
+  },
+
+  _vizRenderFieldModal() {
+    const slot = this._viz.fieldModalSlot || 'a';
+    const state = this._vizGetSlotState(slot);
+    const inspect = state.inspect || {};
+    const fields = this._vizFieldSortItems(inspect.fields || []);
+    const selected = new Set(state.selectedFields || []);
+    const subtitle = document.getElementById('viz-field-subtitle');
+    if (subtitle) subtitle.textContent = `${slot.toUpperCase()} · ${this._vizBasename(inspect.source || state.matPath)} · 选择需要载入 VizData 的场变量`;
+    const list = document.getElementById('viz-field-list');
+    if (!list) return;
+    if (!fields.length) {
+      list.innerHTML = '<div class="viz-field-empty">未发现可识别的数值场变量。</div>';
+      this._vizUpdateFieldCount();
+      return;
+    }
+    const rows = fields.map(item => {
+      const checked = selected.has(item.key) ? 'checked' : '';
+      const shape = Array.isArray(item.shape) ? item.shape.join(' × ') : '-';
+      const family = this._vizFamilyLabel(item.family === 'force' ? 'reaction' : item.family);
+      const scalarNote = this._vizFieldScalarNote(item);
+      const symbol = String(item.symbol || '').trim();
+      const formula = String(item.formula || '').trim();
+      const symbolHtml = symbol ? `\\(${UI.escapeHtml(symbol)}\\)` : '-';
+      return `
+        <label class="viz-field-table-row">
+          <input type="checkbox" class="viz-field-check" value="${UI.escapeAttr(item.key)}" ${checked}>
+          <span class="viz-field-main">
+            <span class="viz-field-name">${UI.escapeHtml(item.key)}</span>
+            <span class="viz-field-label">${UI.escapeHtml(item.label || item.key)}</span>
+          </span>
+          <span class="viz-field-cell">${UI.escapeHtml(item.location || 'unknown')}</span>
+          <span class="viz-field-cell">${UI.escapeHtml(item.frames || 'single')}</span>
+          <span class="viz-field-cell">${UI.escapeHtml(item.tensor_kind || 'components')}</span>
+          <span class="viz-field-cell">${UI.escapeHtml(family)}</span>
+          <span class="viz-field-symbol" title="${UI.escapeAttr(formula || symbol)}">${symbolHtml}</span>
+          <span class="viz-field-shape">${UI.escapeHtml(shape)}</span>
+          <span class="viz-field-note">${UI.escapeHtml(item.default_selected ? scalarNote : '可选')}</span>
+        </label>`;
+    }).join('');
+    list.innerHTML = this._vizRenderFieldTableHeader(fields, selected) + rows;
+    this._typesetMath(list);
+    this._vizBindFieldTableEvents();
+    this._vizUpdateFieldCount();
+  },
+
+  _vizFieldScalarNote(item) {
+    const n = Number(item.n_components || 1);
+    if (item.tensor_kind === 'stress_voigt') return `components + Mises (${n})`;
+    if (item.tensor_kind === 'strain_voigt') return `components + Equivalent (${n})`;
+    if (item.tensor_kind === 'vector') return n > 1 ? `components + Magnitude (${n})` : 'components + Magnitude';
+    return n > 1 ? `components (${n})` : 'scalar';
+  },
+
+  _vizStoreFieldChecks() {
+    const slot = this._viz.fieldModalSlot || 'a';
+    const state = this._vizGetSlotState(slot);
+    state.selectedFields = [...document.querySelectorAll('#viz-field-list .viz-field-check')]
+      .filter(input => input.checked)
+      .map(input => input.value);
+    this._vizUpdateFieldCount();
+  },
+
+  _vizUpdateFieldCount() {
+    const slot = this._viz.fieldModalSlot || 'a';
+    const state = this._vizGetSlotState(slot);
+    const count = state.selectedFields?.length || 0;
+    const el = document.getElementById('viz-field-count');
+    if (el) el.textContent = `已选 ${count} 个变量`;
+    const confirm = document.getElementById('viz-field-confirm');
+    if (confirm) confirm.disabled = count === 0;
+  },
+
+  _vizSetFieldChecks(mode) {
+    const slot = this._viz.fieldModalSlot || 'a';
+    const state = this._vizGetSlotState(slot);
+    const fields = state.inspect?.fields || [];
+    if (mode === 'all') {
+      state.selectedFields = fields.map(item => item.key);
+    } else if (mode === 'defaults') {
+      state.selectedFields = fields.filter(item => item.default_selected).map(item => item.key);
+    } else {
+      state.selectedFields = [];
+    }
+    this._vizRenderFieldModal();
+  },
+
+  async _vizConfirmFieldSelection() {
+    this._vizStoreFieldChecks();
+    const slot = this._viz.fieldModalSlot || 'a';
+    const state = this._vizGetSlotState(slot);
+    this._vizShowFieldModal(false);
+    await this._vizLoadSelectedMat(slot, state.matPath, state.selectedFields);
+  },
+
+  async _vizBrowseMat(slot) {
+    const state = this._vizGetSlotState(slot);
+    const model = this._vizGetModelByKey(state.modelKey);
+    const browseRes = await this.apiPost('/api/browse', {
+      field_type: 'mat_file',
+      title: `为场景 ${slot.toUpperCase()} 选择 MAT 结果`,
+      initial_dir: model?.path || 'C:\\',
+    }).catch(() => null);
+    if (!browseRes?.path) return;
+    if (model && this._vizPathBelongsToModel(browseRes.path, model.path)) {
+      if (!this._vizMatchMatPath(state.mats, browseRes.path)) {
+        await this._vizRefreshMatOptions(slot, { force: true, preferPath: browseRes.path });
+      }
+      const matched = this._vizMatchMatPath(state.mats, browseRes.path);
+      if (matched) {
+        state.matPath = matched.abs_path;
+        this._vizPopulateMatSelect(slot);
+      }
+    }
+    await this._vizInspectSelectedMat(slot, browseRes.path);
+  },
+
+  _vizSetStatus(text) {
+    const statusEl = document.getElementById('viz-status-text');
+    if (statusEl) statusEl.textContent = text;
+  },
+
+  _vizShowCompare(show) {
+    const panelB = document.getElementById('viz-panel-b');
+    const toolbarB = document.getElementById('viz-toolbar-b');
+    const btn = document.getElementById('viz-compare-toggle');
+    const syncBtn = document.getElementById('viz-sync-camera');
+    const diffBtn = document.getElementById('viz-diff-run');
+    const optionWraps = [
+      document.getElementById('viz-diff-absolute-wrap'),
+    ];
+    const boxplotBtn = document.getElementById('viz-diff-boxplot');
+    const saveBtn = document.getElementById('viz-diff-save');
+    const locked = !!this._viz.compareLocked;
+    if (panelB) panelB.style.display = show ? '' : 'none';
+    if (toolbarB) toolbarB.style.display = show ? '' : 'none';
+    if (btn) {
+      btn.classList.toggle('active', show);
+      btn.classList.toggle('locked', locked);
+      btn.disabled = locked;
+      btn.title = locked ? 'Validation 结果固定使用 JAX / ABAQUS 双栏对比' : '切换 A/B 双栏对比';
+    }
+    if (syncBtn) syncBtn.style.display = show ? '' : 'none';
+    if (diffBtn) diffBtn.style.display = show ? '' : 'none';
+    if (boxplotBtn) boxplotBtn.style.display = show ? '' : 'none';
+    if (saveBtn) saveBtn.style.display = show ? '' : 'none';
+    optionWraps.forEach(wrap => {
+      if (wrap) wrap.style.display = show ? 'inline-flex' : 'none';
+    });
+    if (!show) {
+      this._viz.diffPayload = null;
+      this._vizHideBoxplot();
+    }
+    this._vizUpdatePanelLabels();
+    this._vizRefreshCompareButtons();
+    this._vizRenderSourceSummary();
+  },
+
+  _vizRefreshCompareButtons() {
+    const syncBtn = document.getElementById('viz-sync-camera');
+    const absoluteCheck = document.getElementById('viz-diff-absolute');
+    const boxplotBtn = document.getElementById('viz-diff-boxplot');
+    const saveBtn = document.getElementById('viz-diff-save');
+    const diffBtn = document.getElementById('viz-diff-run');
+    const hasBoth = !!(this._viz.info_a && this._viz.info_b && this._viz.compareMode);
+    const hasDiff = this._vizHasDiffField();
+    if (syncBtn) syncBtn.disabled = !this._viz.compareMode;
+    if (absoluteCheck) {
+      absoluteCheck.disabled = !hasBoth;
+      absoluteCheck.checked = !!this._viz.absoluteDiff;
+    }
+    if (boxplotBtn) boxplotBtn.disabled = !hasDiff;
+    if (saveBtn) saveBtn.disabled = !hasDiff;
+    if (diffBtn) diffBtn.disabled = !hasBoth;
+  },
+
+  _vizHasDiffField() {
+    const hasA = Array.isArray(this._viz.info_a?.fields) && this._viz.info_a.fields.includes('viz_diff');
+    const hasB = Array.isArray(this._viz.info_b?.fields) && this._viz.info_b.fields.includes('viz_diff');
+    return !!(this._viz.compareMode && hasA && hasB);
+  },
+
+  _vizActiveUsesDiff() {
+    return this._viz.info_a?.active_field === 'viz_diff' || this._viz.info_b?.active_field === 'viz_diff';
+  },
+
+  _vizRenderSourceSummary() {
+    ['a', 'b'].forEach(slot => {
+      const chip = document.getElementById(`viz-source-${slot}`);
+      if (!chip) return;
+      const info = slot === 'a' ? this._viz.info_a : this._viz.info_b;
+      const state = this._vizGetSlotState(slot);
+      const model = this._vizGetModelByKey(state.modelKey);
+      if (!info || (slot === 'b' && !this._viz.compareMode)) {
+        chip.style.display = 'none';
+        chip.textContent = '';
+        chip.title = '';
+        return;
+      }
+      const modelText = model ? model.name : 'No model';
+      const sourcePath = info.source || state.matPath || '';
+      chip.textContent = `${slot.toUpperCase()} · ${modelText} · ${this._vizBasename(sourcePath)}`;
+      chip.title = sourcePath;
+      chip.style.display = '';
+    });
+  },
+
+  _vizBasename(path) {
+    const text = String(path || '').trim();
+    if (!text) return '-';
+    const parts = text.split(/[\\/]/);
+    return parts[parts.length - 1] || text;
+  },
+
+  _vizClassifyFieldFamily(key, meta = {}) {
+    const text = `${key} ${meta.label || ''}`.toLowerCase();
+    if (text.includes('stress')) return 'stress';
+    if (text.includes('strain') || text.includes('peeq')) return 'strain';
+    if (/(^u$|^frame_u$|^elastic_u$|^solid_u_nodal$|_u_|displacement)/.test(text)) return 'displacement';
+    if (text.includes('reaction') || text.includes('internal force') || text.includes('nforc') || text.includes('force')) return 'reaction';
+    return 'other';
+  },
+
+  _vizComponentLabels(family, meta = {}, key = '') {
+    const nComp = Number(meta.n_components || 1);
+    const text = `${key} ${meta.label || ''}`.toLowerCase();
+    if (nComp <= 1) return [];
+    if (text.includes('shell generalized stress') && nComp === 6) {
+      return ['SF11', 'SF22', 'SF12', 'SM11', 'SM22', 'SM12'];
+    }
+    if (text.includes('shell generalized strain') && nComp === 6) {
+      return ['GE11', 'GE22', 'GE12', 'GK11', 'GK22', 'GK12'];
+    }
+    if (text.includes('shell displacement') && nComp === 6) {
+      return ['U1', 'U2', 'U3', 'UR1', 'UR2', 'UR3'];
+    }
+    if (text.includes('shell generalized nforc') && nComp === 6) {
+      return ['F1', 'F2', 'F3', 'M1', 'M2', 'M3'];
+    }
+    if (text.includes('equality_violation') || text.includes('self-equilibrium')) {
+      return ['1', '2', '3'].slice(0, nComp).concat(Array.from({ length: Math.max(0, nComp - 3) }, (_, i) => `${i + 4}`));
+    }
+    if (text.includes('shakedown_sf_') || text.includes('rsdms_sf_') || text.includes('generalized_residual_sf') || text.includes('generalized_total_sf')) {
+      return ['SF11', 'SF22', 'SF12'].slice(0, nComp);
+    }
+    if (text.includes('shakedown_sm_') || text.includes('rsdms_sm_') || text.includes('generalized_residual_sm') || text.includes('generalized_total_sm')) {
+      return ['SM11', 'SM22', 'SM12'].slice(0, nComp);
+    }
+    if (family === 'stress') {
+      if (nComp === 6) return ['S11', 'S22', 'S33', 'S12', 'S13', 'S23'];
+      if (nComp === 3) return ['S11', 'S22', 'S12'];
+    }
+    if (family === 'strain') {
+      if (nComp === 6) return ['E11', 'E22', 'E33', 'E12', 'E13', 'E23'];
+      if (nComp === 3) return ['E11', 'E22', 'E12'];
+    }
+    if (family === 'displacement') {
+      const labels = text.includes('validation_') ? ['U1', 'U2', 'U3'] : ['1', '2', '3'];
+      return labels.slice(0, nComp).concat(Array.from({ length: Math.max(0, nComp - labels.length) }, (_, i) => `${i + labels.length + 1}`));
+    }
+    if (family === 'reaction') {
+      const labels = text.includes('validation_') ? ['NFORC1', 'NFORC2', 'NFORC3'] : ['1', '2', '3'];
+      return labels.slice(0, nComp).concat(Array.from({ length: Math.max(0, nComp - labels.length) }, (_, i) => `${i + labels.length + 1}`));
+    }
+    return Array.from({ length: nComp }, (_, i) => `${i + 1}`);
+  },
+
+  _vizFamilyLabel(family) {
+    return {
+      stress: 'Stress',
+      strain: 'Strain',
+      displacement: 'Displacement',
+      reaction: 'Force',
+      force: 'Force',
+      other: '其他',
+    }[family] || '其他';
+  },
+
+  _vizVariableCode(key, meta = {}) {
+    const text = `${key} ${meta.label || ''}`.toLowerCase();
+    if (text.includes('viz_diff') || /\bdiff\b/.test(text)) return 'Diff';
+    if (text.includes('cineq') || text.includes('inequality_violation')) return 'CInEQ';
+    if (text.includes('equality_violation') || text.includes('self-equilibrium')) return 'CEQ';
+    if (text.includes('generalized_residual_sf') || text.includes('generalized_total_sf') || text.includes('shakedown_sf_') || text.includes('rsdms_sf_') || /\bsf\b/.test(text)) return 'SF';
+    if (text.includes('generalized_residual_sm') || text.includes('generalized_total_sm') || text.includes('shakedown_sm_') || text.includes('rsdms_sm_') || /\bsm\b/.test(text)) return 'SM';
+    if (text.includes('shakedown_phi') || text.includes('ilyushin_phi') || text.includes('yield function')) return 'Phi';
+    if (text.includes('peeq')) return 'PEEQ';
+    if (text.includes('shell generalized stress')) return 'SGEN';
+    if (text.includes('shell generalized strain')) return 'EGEN';
+    if (text.includes('residual_stress') || text.includes('residual stress')) return 'RS';
+    if (text.includes('force_error')) return 'FERR';
+    if (text.includes('stress')) return 'S';
+    if (text.includes('strain')) return 'E';
+    if (/(^u$|^frame_u$|^elastic_u$|^solid_u_nodal$|_u_|displacement)/.test(text)) return 'U';
+    if (text.includes('reaction')) return 'RF';
+    if (text.includes('internal force') || text.includes('internal_force') || text.includes('nforc') || text.includes('force')) return 'NFORC';
+    return String(key || 'VAR').replace(/^shakedown_/, '').replace(/^frame_/, '').replace(/^gauss_/, '').toUpperCase();
+  },
+
+  _vizShortFieldSource(key) {
+    return String(key || '')
+      .replace(/^shakedown_/, '')
+      .replace(/^frame_/, '')
+      .replace(/^gauss_/, '')
+      .replace(/_stress$/, '')
+      .replace(/_strain$/, '')
+      .replace(/_/g, ' ');
+  },
+
+  _vizVariableMapText(variable) {
+    if (!variable) return '';
+    const key = String(variable.key || '');
+    if (variable.code === 'Diff') {
+      return `${variable.code} (${key}): B-A displayed scalar`;
+    }
+    if (variable.code === 'CEQ') {
+      return `${variable.code} (${key}): residual stress self-equilibrium`;
+    }
+    if (variable.code === 'CInEQ') {
+      return `${variable.code} (${key}): yield inequality violation`;
+    }
+    if (variable.code === 'SGEN') {
+      return `${variable.code} (${key}): shell generalized stress [SF, SM]`;
+    }
+    if (variable.code === 'EGEN') {
+      return `${variable.code} (${key}): shell generalized strain [GE, GK]`;
+    }
+    return `${variable.code} (${key})`;
+  },
+
+  _vizScalarOptionLabel(family, key, meta = {}) {
+    const text = `${key} ${meta.label || ''}`.toLowerCase();
+    if (text.includes('viz_diff') || /\bdiff\b/.test(text)) return 'Value';
+    if (text.includes('peeq')) return 'PEEQ';
+    if (text.includes('violation')) return 'Magnitude';
+    if (text.includes('shell generalized stress') || text.includes('shell generalized strain')) return 'Magnitude';
+    if (family === 'stress') return 'Mises';
+    if (family === 'strain') return 'Equivalent';
+    if (family === 'displacement') return 'Magnitude';
+    if (family === 'reaction') return 'Magnitude';
+    return 'Value';
+  },
+
+  _vizEquivalentLabel(family, key, meta = {}) {
+    const text = `${key} ${meta.label || ''}`.toLowerCase();
+    if (text.includes('shell generalized stress') || text.includes('shell generalized strain')) return 'Magnitude';
+    if (family === 'stress') return 'Mises';
+    if (family === 'strain') return 'Equivalent';
+    if (family === 'displacement' || family === 'reaction') return 'Magnitude';
+    return this._vizScalarOptionLabel(family, key, meta);
+  },
+
+  _vizEncodeFieldChoice(key, component) {
+    return `${key}::${component === null || component === undefined ? 'auto' : component}`;
+  },
+
+  _vizDecodeFieldChoice(value) {
+    const text = String(value || '');
+    const idx = text.lastIndexOf('::');
+    if (idx < 0) return { key: text, component: null };
+    const key = text.slice(0, idx);
+    const raw = text.slice(idx + 2);
+    return { key, component: raw === 'auto' ? null : Number(raw) };
+  },
+
+  _vizNormalizeChoice(key, component) {
+    let resolvedKey = String(key || '');
+    let resolvedComponent = component ?? null;
+    if (resolvedKey.startsWith('derived_vm_')) {
+      resolvedKey = resolvedKey.slice('derived_vm_'.length);
+      resolvedComponent = null;
+    } else if (resolvedKey.startsWith('derived_mag_')) {
+      resolvedKey = resolvedKey.slice('derived_mag_'.length);
+      resolvedComponent = null;
+    }
+    return { key: resolvedKey, component: resolvedComponent };
+  },
+
+  _vizBuildFieldCatalog(info) {
+    const fieldMeta = info?.field_meta || {};
+    const orderedKeys = Array.isArray(info?.fields) && info.fields.length ? info.fields : Object.keys(fieldMeta);
+    const visibleKeys = orderedKeys.filter(key => !String(key).startsWith('derived_'));
+    const keys = visibleKeys.length ? visibleKeys : orderedKeys;
+    const quantitiesByFamily = {};
+    const variables = [];
+    const codeCounts = {};
+    keys.forEach(key => {
+      const meta = fieldMeta[key];
+      if (!meta) return;
+      const code = this._vizVariableCode(key, meta);
+      codeCounts[code] = (codeCounts[code] || 0) + 1;
+    });
+    const pushUnique = (variableKey, option) => {
+      if (!quantitiesByFamily[variableKey]) quantitiesByFamily[variableKey] = [];
+      if (!quantitiesByFamily[variableKey].some(item => item.value === option.value)) {
+        quantitiesByFamily[variableKey].push(option);
+      }
+    };
+    keys.forEach(key => {
+      const meta = fieldMeta[key];
+      if (!meta) return;
+      const family = this._vizClassifyFieldFamily(key, meta);
+      const code = this._vizVariableCode(key, meta);
+      const label = codeCounts[code] > 1 ? `${code} (${this._vizShortFieldSource(key)})` : code;
+      variables.push({ id: key, label, code, key, meta });
+      const nComp = Number(meta.n_components || 1);
+      if (nComp <= 1) {
+        pushUnique(key, {
+          family: key,
+          fieldFamily: family,
+          key,
+          component: null,
+          label: this._vizScalarOptionLabel(family, key, meta),
+          value: this._vizEncodeFieldChoice(key, null),
+        });
+        return;
+      }
+      pushUnique(key, {
+        family: key,
+        fieldFamily: family,
+        key,
+        component: null,
+        label: this._vizEquivalentLabel(family, key, meta),
+        value: this._vizEncodeFieldChoice(key, null),
+      });
+      this._vizComponentLabels(family, meta, key).forEach((label, index) => {
+        pushUnique(key, {
+          family: key,
+          fieldFamily: family,
+          key,
+          component: index,
+          label,
+          value: this._vizEncodeFieldChoice(key, index),
+        });
+      });
+    });
+    return {
+      families: variables,
+      quantitiesByFamily,
+      allOptions: variables.flatMap(variable => quantitiesByFamily[variable.id] || []),
+    };
+  },
+
+  _vizFindActiveOption(catalog, info) {
+    if (!catalog || !info) return null;
+    const normalized = this._vizNormalizeChoice(info.active_field, info.active_component);
+    const target = this._vizEncodeFieldChoice(normalized.key, normalized.component);
+    return catalog.allOptions.find(option => option.value === target) || null;
+  },
+
+  _vizPopulateFieldSelectors(slot, { preferState = false } = {}) {
+    const info = slot === 'a' ? this._viz.info_a : this._viz.info_b;
+    const familySel = document.getElementById(`viz-family-${slot}`);
+    const quantitySel = document.getElementById(`viz-quantity-${slot}`);
+    const mapEl = document.getElementById(`viz-field-map-${slot}`);
+    if (!familySel || !quantitySel) return;
+    if (!info) {
+      familySel.innerHTML = '<option value="">类别</option>';
+      quantitySel.innerHTML = '<option value="">结果量</option>';
+      familySel.disabled = true;
+      quantitySel.disabled = true;
+      if (mapEl) mapEl.textContent = '';
+      return;
+    }
+    const state = this._vizGetSlotState(slot);
+    const catalog = this._vizBuildFieldCatalog(info);
+    state.catalog = catalog;
+    const activeOption = this._vizFindActiveOption(catalog, info);
+    let family = (preferState ? state.family : activeOption?.family || state.family) || catalog.families[0]?.id || '';
+    if (!catalog.quantitiesByFamily[family]?.length) {
+      family = activeOption?.family || catalog.families[0]?.id || '';
+    }
+    state.family = family;
+    familySel.innerHTML = catalog.families.length
+      ? catalog.families.map(item => `<option value="${UI.escapeAttr(item.id)}">${UI.escapeHtml(item.label)}</option>`).join('')
+      : '<option value="">类别</option>';
+    familySel.disabled = catalog.families.length === 0;
+    if (family) familySel.value = family;
+    const quantities = catalog.quantitiesByFamily[family] || [];
+    let quantityValue = preferState ? state.quantityValue : activeOption?.value || state.quantityValue;
+    if (!quantities.some(item => item.value === quantityValue)) {
+      quantityValue = quantities[0]?.value || '';
+    }
+    state.quantityValue = quantityValue;
+    quantitySel.innerHTML = quantities.length
+      ? quantities.map(item => `<option value="${UI.escapeAttr(item.value)}">${UI.escapeHtml(item.label)}</option>`).join('')
+      : '<option value="">结果量</option>';
+    quantitySel.disabled = quantities.length === 0;
+    if (quantityValue) quantitySel.value = quantityValue;
+    const variable = catalog.families.find(item => item.id === family);
+    if (mapEl) {
+      mapEl.textContent = this._vizVariableMapText(variable);
+      mapEl.title = variable?.meta?.label || variable?.key || '';
+    }
+  },
+
+  _vizApplyFieldSelection(slot, value) {
+    const choice = this._vizDecodeFieldChoice(value);
+    if (!choice.key) return;
+    this._vizStopPlayback(slot);
+    this._vizSendWs(slot, {
+      action: 'set_field',
+      key: choice.key,
+      component: choice.component,
+    });
+  },
+
+  _vizSlotInfo(slot) {
+    return slot === 'a' ? this._viz.info_a : this._viz.info_b;
+  },
+
+  _vizSetSlotInfo(slot, info) {
+    if (slot === 'a') this._viz.info_a = info;
+    else this._viz.info_b = info;
+  },
+
+  _vizLatexInline(value) {
+    const text = String(value || '').trim();
+    return text ? `\\(${UI.escapeHtml(text)}\\)` : '';
+  },
+
+  _vizUpdateMathOverlay(slot) {
+    const overlay = document.getElementById(`viz-math-overlay-${slot}`);
+    if (!overlay) return;
+    const info = this._vizSlotInfo(slot);
+    if (!info || !info.show_overlay) {
+      overlay.style.display = 'none';
+      overlay.innerHTML = '';
+      return;
+    }
+    const key = String(info.active_field || '');
+    const meta = info.field_meta?.[key] || {};
+    const generated = info.generated_field_info?.[key] || {};
+    const symbol = meta.symbol || generated.symbol || '';
+    const formula = meta.formula || generated.display_formula || generated.formula || '';
+    const description = meta.description || generated.display_text || '';
+    const title = info.active_scalar_label || info.active_field_label || meta.label || key || '-';
+    const rows = [
+      `<div class="viz-math-overlay-title">${UI.escapeHtml(title)}</div>`,
+    ];
+    if (symbol) {
+      rows.push(`<div class="viz-math-overlay-row"><span>符号</span><strong>${this._vizLatexInline(symbol)}</strong></div>`);
+    }
+    if (formula) {
+      rows.push(`<div class="viz-math-overlay-row"><span>公式</span><strong>${this._vizLatexInline(formula)}</strong></div>`);
+    }
+    if (description) {
+      rows.push(`<div class="viz-math-overlay-desc">${UI.escapeHtml(description)}</div>`);
+    }
+    const frameText = this._vizFrameFullLabel(info);
+    if (frameText) {
+      rows.push(`<div class="viz-math-overlay-frame">${UI.escapeHtml(frameText)}</div>`);
+    }
+    overlay.innerHTML = rows.join('');
+    overlay.style.display = 'block';
+    this._typesetMath(overlay);
+  },
+
+  _vizValidationSideLabel(info) {
+    const key = String(info?.active_field || '').toLowerCase();
+    if (key.startsWith('validation_jax_')) return 'JAX';
+    if (key.startsWith('validation_abaqus_')) return 'ABAQUS';
+    const label = String(info?.active_field_label || '').trim();
+    if (/^jax\b/i.test(label)) return 'JAX';
+    if (/^abaqus\b/i.test(label)) return 'ABAQUS';
+    return '';
+  },
+
+  _vizUpdatePanelLabels() {
+    const labelA = document.querySelector('#viz-panel-a .viz-panel-label');
+    const labelB = document.querySelector('#viz-panel-b .viz-panel-label');
+    const sideA = this._vizValidationSideLabel(this._viz.info_a);
+    const sideB = this._vizValidationSideLabel(this._viz.info_b);
+    const validationCompare = !!this._viz.compareLocked || !!(sideA || sideB);
+    if (labelA) {
+      labelA.textContent = validationCompare ? (sideA || 'JAX') : 'A';
+      labelA.title = validationCompare ? `Validation ${labelA.textContent} view` : 'View A';
+    }
+    if (labelB) {
+      labelB.textContent = validationCompare ? (sideB || 'ABAQUS') : 'B';
+      labelB.title = validationCompare ? `Validation ${labelB.textContent} view` : 'View B';
+    }
+  },
+
+  _vizClampFrame(info, frame) {
+    const nFrames = Math.max(1, Number(info?.n_frames || 0));
+    const value = Number.isFinite(Number(frame)) ? Number(frame) : 0;
+    return Math.max(0, Math.min(value, nFrames - 1));
+  },
+
+  _vizSetFrame(slot, frame) {
+    const info = this._vizSlotInfo(slot);
+    if (!info) return;
+    const target = this._vizClampFrame(info, frame);
+    info.active_frame = target;
+    this._vizSetSlotInfo(slot, info);
+    const slider = document.getElementById(`viz-frame-slider-${slot}`);
+    if (slider) slider.value = target;
+    const labelEl = document.getElementById(`viz-frame-label-${slot}`);
+    if (labelEl) labelEl.textContent = this._vizFrameLabel(info, target);
+    this._vizUpdateFrameDetailButton(slot, info);
+    this._vizUpdateMathOverlay(slot);
+    this._vizSendWs(slot, {action: 'set_frame', frame: target});
+  },
+
+  _vizStepFrame(slot, delta) {
+    const info = this._vizSlotInfo(slot);
+    const nFrames = Math.max(1, Number(info?.n_frames || 0));
+    if (!info || nFrames <= 1) return;
+    const current = this._vizClampFrame(info, info.active_frame || 0);
+    const next = (current + Number(delta || 0) + nFrames) % nFrames;
+    this._vizSetFrame(slot, next);
+  },
+
+  _vizFrameIcon(name) {
+    const safe = ['play', 'pause', 'prev', 'next'].includes(name) ? name : 'play';
+    return `<span class="viz-icon viz-icon-${safe}" aria-hidden="true"></span>`;
+  },
+
+  _vizStopPlayback(slot) {
+    const timer = this._viz.playTimers?.[slot];
+    if (timer) {
+      window.clearInterval(timer);
+      delete this._viz.playTimers[slot];
+    }
+    const btn = document.getElementById(`viz-frame-play-${slot}`);
+    if (btn) {
+      btn.classList.remove('active');
+      btn.innerHTML = this._vizFrameIcon('play');
+      btn.setAttribute('aria-label', '连续播放');
+      btn.title = '连续播放';
+    }
+  },
+
+  _vizTogglePlayback(slot) {
+    if (this._viz.playTimers?.[slot]) {
+      this._vizStopPlayback(slot);
+      return;
+    }
+    const info = this._vizSlotInfo(slot);
+    const nFrames = Math.max(1, Number(info?.n_frames || 0));
+    if (!info || nFrames <= 1) return;
+    const btn = document.getElementById(`viz-frame-play-${slot}`);
+    if (btn) {
+      btn.classList.add('active');
+      btn.innerHTML = this._vizFrameIcon('pause');
+      btn.setAttribute('aria-label', '暂停播放');
+      btn.title = '暂停播放';
+    }
+    this._viz.playTimers[slot] = window.setInterval(() => {
+      const latest = this._vizSlotInfo(slot);
+      if (!latest || Math.max(1, Number(latest.n_frames || 0)) <= 1) {
+        this._vizStopPlayback(slot);
+        return;
+      }
+      this._vizStepFrame(slot, 1);
+    }, 450);
+  },
+
+  _vizShowFrameDetail(slot) {
+    const info = this._vizSlotInfo(slot);
+    const full = this._vizFrameFullLabel(info);
+    if (!full) return;
+    this._vizSetStatus(full);
+    const overlayBtn = document.getElementById(`viz-overlay-${slot}`);
+    if (overlayBtn && !overlayBtn._on) {
+      overlayBtn._on = true;
+      overlayBtn.classList.add('active');
+      info.show_overlay = true;
+      this._vizSetSlotInfo(slot, info);
+      this._vizUpdateMathOverlay(slot);
+      this._vizSendWs(slot, {action: 'show_overlay', show: true});
+    }
+  },
+
+  _vizUpdateControls(slot) {
+    const info = slot === 'a' ? this._viz.info_a : this._viz.info_b;
+    if (!info) return;
+    this._vizPopulateFieldSelectors(slot);
+    this._vizUpdateFrameAxisLabel(slot, info);
+    const slider = document.getElementById(`viz-frame-slider-${slot}`);
+    const label = document.getElementById(`viz-frame-label-${slot}`);
+    if (slider && info.n_frames > 1) {
+      slider.max = info.n_frames - 1;
+      slider.value = info.active_frame || 0;
+      slider.disabled = false;
+      if (label) label.textContent = this._vizFrameLabel(info);
+    } else if (slider) {
+      slider.max = 0;
+      slider.value = 0;
+      slider.disabled = true;
+      if (label) label.textContent = this._vizFrameLabel(info);
+    }
+    this._vizUpdateFrameButtons(slot, info);
+    this._vizUpdateFrameDetailButton(slot, info);
+    const minInput = document.getElementById(`viz-clim-min-${slot}`);
+    const maxInput = document.getElementById(`viz-clim-max-${slot}`);
+    if (Array.isArray(info.clim) && Number.isFinite(info.clim[0]) && Number.isFinite(info.clim[1])) {
+      if (minInput) minInput.value = info.clim[0];
+      if (maxInput) maxInput.value = info.clim[1];
+    } else if (Array.isArray(info.auto_clim) && Number.isFinite(info.auto_clim[0]) && Number.isFinite(info.auto_clim[1])) {
+      if (minInput) minInput.value = info.auto_clim[0];
+      if (maxInput) maxInput.value = info.auto_clim[1];
+    } else {
+      if (minInput) minInput.value = '';
+      if (maxInput) maxInput.value = '';
+    }
+    const autoBtn = document.getElementById(`viz-clim-auto-${slot}`);
+    if (autoBtn) autoBtn.classList.toggle('active', !info.clim);
+    const edgeBtn = document.getElementById(`viz-edges-${slot}`);
+    if (edgeBtn) {
+      edgeBtn._on = !!info.show_edges;
+      edgeBtn.classList.toggle('active', !!info.show_edges);
+    }
+    const overlayBtn = document.getElementById(`viz-overlay-${slot}`);
+    if (overlayBtn) {
+      overlayBtn._on = !!info.show_overlay;
+      overlayBtn.classList.toggle('active', !!info.show_overlay);
+    }
+    this._vizUpdateMathOverlay(slot);
+    this._vizUpdatePanelLabels();
+    const emptyEl = document.getElementById(`viz-empty-${slot}`);
+    if (emptyEl) emptyEl.style.display = 'none';
+    this._vizRenderSourceSummary();
+    this._vizRefreshCompareButtons();
+  },
+
+  _vizConnectWs(slot) {
+    const key = `ws_${slot}`;
+    if (this._viz[key]) {
+      try { this._viz[key].close(); } catch (_) {}
+      this._viz[key] = null;
+    }
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    const url = `${proto}://${location.host}/api/viz/ws/${slot}`;
+    const ws = new WebSocket(url);
+    ws.binaryType = 'arraybuffer';
+    ws.onmessage = (evt) => {
+      if (evt.data instanceof ArrayBuffer) {
+        const blob = new Blob([evt.data], {type: 'image/jpeg'});
+        const imgUrl = URL.createObjectURL(blob);
+        const canvas = document.getElementById(`viz-canvas-${slot}`);
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        const img = new Image();
+        img.onload = () => {
+          const panel = canvas.parentElement;
+          const targetWidth = Math.max(1, Math.floor(panel?.clientWidth || img.width));
+          const targetHeight = Math.max(1, Math.floor(panel?.clientHeight || img.height));
+          if (canvas.width !== targetWidth) canvas.width = targetWidth;
+          if (canvas.height !== targetHeight) canvas.height = targetHeight;
+          const scale = Math.min(targetWidth / img.width, targetHeight / img.height);
+          const drawWidth = Math.round(img.width * scale);
+          const drawHeight = Math.round(img.height * scale);
+          const dx = Math.floor((targetWidth - drawWidth) / 2);
+          const dy = Math.floor((targetHeight - drawHeight) / 2);
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, targetWidth, targetHeight);
+          ctx.drawImage(img, dx, dy, drawWidth, drawHeight);
+          URL.revokeObjectURL(imgUrl);
+        };
+        img.src = imgUrl;
+      } else {
+        try {
+          const info = JSON.parse(evt.data);
+          if (slot === 'a') this._viz.info_a = info;
+          else this._viz.info_b = info;
+          this._vizUpdateControls(slot);
+        } catch (_) {}
+      }
+    };
+    ws.onerror = () => {
+      this._vizSetStatus('WebSocket 连接出错');
+    };
+    ws.onopen = () => {
+      ws.send(JSON.stringify({action: 'render'}));
+    };
+    ws.onclose = () => {
+      if (this._viz[key] === ws) this._viz[key] = null;
+    };
+    this._viz[key] = ws;
+  },
+
+  _vizSendWs(slot, msg) {
+    const ws = this._viz[`ws_${slot}`];
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(msg));
+    } else if (ws && ws.readyState === WebSocket.CONNECTING) {
+      ws.addEventListener('open', () => ws.send(JSON.stringify(msg)), {once: true});
+    }
+  },
+
+  async _vizRunDiff() {
+    if (!(this._viz.info_a && this._viz.info_b && this._viz.compareMode)) {
+      this._vizSetStatus('请先在对比模式下同时加载 A 和 B 两个场景。');
+      return;
+    }
+    if (this._vizActiveUsesDiff()) {
+      const msg = 'Diff 不能再次参与对比。请先在 A 和 B 中选择原始结果量，再点击“对比”；本次操作未执行。';
+      this._vizSetStatus(msg);
+      window.alert(msg);
+      return;
+    }
+    this._vizSetStatus('正在计算 Diff...');
+    const res = await this.apiPost('/api/viz/diff', {
+      absolute: this._viz.absoluteDiff,
+    }).catch(() => null);
+    if (!res || !res.ok) {
+      this._vizSetStatus(`Diff 计算失败：${res?.detail || '未知错误'}`);
+      return;
+    }
+    this._viz.diffPayload = res;
+    if (res.scene_a) {
+      this._viz.info_a = res.scene_a;
+      this._vizUpdateControls('a');
+    }
+    if (res.scene_b) {
+      this._viz.info_b = res.scene_b;
+      this._vizUpdateControls('b');
+    }
+    this._vizSendWs('a', {action: 'render'});
+    this._vizSendWs('b', {action: 'render'});
+    this._vizHideBoxplot();
+    this._vizRefreshCompareButtons();
+    this._vizSetStatus(`Diff 已生成：${res.diff_info_text || res.label || 'B-A'}`);
+  },
+
+  async _vizOpenDiffBoxplot() {
+    if (!this._vizHasDiffField()) {
+      this._vizSetStatus('请先点击“对比”生成 Diff。');
+      return;
+    }
+    let payload = this._viz.diffPayload;
+    if (!payload || !payload.stats) {
+      payload = await this.apiPost('/api/viz/diff-boxplot', {}).catch(() => null);
+      if (payload?.ok) this._viz.diffPayload = payload;
+    }
+    if (!payload || !payload.ok) {
+      this._vizSetStatus(`箱线图生成失败：${payload?.detail || 'Diff 不可用'}`);
+      return;
+    }
+    this._vizRenderBoxplot(payload);
+    this._vizShowBoxplot(true);
+    this._vizSetStatus('Diff 箱线图已生成');
+  },
+
+  async _vizSaveDiffMat() {
+    if (!this._vizHasDiffField()) {
+      this._vizSetStatus('请先点击“对比”生成 Diff。');
+      return;
+    }
+    this._vizSetStatus('正在保存 Diff MAT...');
+    try {
+      const res = await fetch('/api/viz/diff-mat', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) {
+        let detail = '';
+        try { detail = (await res.json())?.detail || ''; } catch (_) {}
+        throw new Error(detail || '保存 Diff 失败');
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = this._vizFilenameFromDisposition(res.headers.get('Content-Disposition')) || 'Diff.mat';
+      a.click();
+      URL.revokeObjectURL(url);
+      this._vizSetStatus(`Diff MAT 已下载：${a.download}`);
+    } catch (err) {
+      this._vizSetStatus(`保存 Diff 失败：${err.message}`);
+    }
+  },
+
+  _vizFilenameFromDisposition(disposition) {
+    const text = String(disposition || '');
+    const utf = text.match(/filename\\*=UTF-8''([^;]+)/i);
+    if (utf) {
+      try { return decodeURIComponent(utf[1]); } catch (_) {}
+    }
+    const plain = text.match(/filename=\"?([^\";]+)\"?/i);
+    return plain ? plain[1] : '';
+  },
+
+  _vizShowBoxplot(show) {
+    const modal = document.getElementById('viz-boxplot-modal');
+    if (!modal) return;
+    modal.style.display = show ? 'flex' : 'none';
+  },
+
+  _vizHideBoxplot() {
+    this._vizShowBoxplot(false);
+  },
+
+  async _vizDownloadBoxplotScreenshot() {
+    const svg = document.getElementById('viz-boxplot-svg');
+    const titleEl = document.querySelector('#viz-boxplot-modal .viz-modal-title');
+    const subtitleEl = document.getElementById('viz-boxplot-subtitle');
+    const statCards = [...document.querySelectorAll('#viz-boxplot-stats .viz-stat-card')];
+    if (!svg) {
+      this._vizSetStatus('箱线图尚未生成');
+      return;
+    }
+
+    const width = 1200;
+    const svgHeight = 455;
+    const cardW = 210;
+    const cardH = 78;
+    const gap = 14;
+    const cardsPerRow = 5;
+    const rows = Math.max(1, Math.ceil(statCards.length / cardsPerRow));
+    const height = 112 + svgHeight + 24 + rows * cardH + Math.max(0, rows - 1) * gap + 44;
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    ctx.fillStyle = '#0b1121';
+    ctx.fillRect(0, 0, width, height);
+    ctx.fillStyle = '#e2e8f0';
+    ctx.font = '700 28px Inter, Segoe UI, sans-serif';
+    ctx.fillText((titleEl?.textContent || '差值箱线图').trim(), 42, 50);
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '16px Inter, Segoe UI, sans-serif';
+    this._vizDrawWrappedText(ctx, (subtitleEl?.textContent || '').trim(), 42, 80, width - 84, 22, 2);
+
+    const svgText = new XMLSerializer().serializeToString(svg);
+    const svgBlob = new Blob([svgText], {type: 'image/svg+xml;charset=utf-8'});
+    const svgUrl = URL.createObjectURL(svgBlob);
+    try {
+      const img = await new Promise((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = reject;
+        image.src = svgUrl;
+      });
+      ctx.drawImage(img, 42, 112, width - 84, svgHeight);
+    } finally {
+      URL.revokeObjectURL(svgUrl);
+    }
+
+    const startY = 112 + svgHeight + 24;
+    statCards.forEach((card, index) => {
+      const col = index % cardsPerRow;
+      const row = Math.floor(index / cardsPerRow);
+      const x = 42 + col * (cardW + gap);
+      const y = startY + row * (cardH + gap);
+      const label = card.querySelector('.viz-stat-label')?.textContent?.trim() || '';
+      const value = card.querySelector('.viz-stat-value')?.textContent?.trim() || '';
+      ctx.fillStyle = '#111827';
+      this._vizRoundRect(ctx, x, y, cardW, cardH, 10);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+      ctx.stroke();
+      ctx.fillStyle = '#64748b';
+      ctx.font = '12px Inter, Segoe UI, sans-serif';
+      ctx.fillText(label, x + 14, y + 26);
+      ctx.fillStyle = '#e2e8f0';
+      ctx.font = '700 18px Inter, Segoe UI, sans-serif';
+      ctx.fillText(value, x + 14, y + 54);
+    });
+
+    const link = document.createElement('a');
+    link.href = canvas.toDataURL('image/png');
+    link.download = `viz_boxplot_${new Date().toISOString().replace(/[:.]/g, '-')}.png`;
+    link.click();
+    this._vizSetStatus('箱线图截图已生成');
+  },
+
+  _vizDrawWrappedText(ctx, text, x, y, maxWidth, lineHeight, maxLines = 2) {
+    if (!text) return;
+    const words = text.split(/\s+/);
+    let line = '';
+    let lines = 0;
+    for (const word of words) {
+      const test = line ? `${line} ${word}` : word;
+      if (ctx.measureText(test).width > maxWidth && line) {
+        ctx.fillText(line, x, y + lines * lineHeight);
+        line = word;
+        lines += 1;
+        if (lines >= maxLines) return;
+      } else {
+        line = test;
+      }
+    }
+    if (line && lines < maxLines) ctx.fillText(line, x, y + lines * lineHeight);
+  },
+
+  _vizRoundRect(ctx, x, y, width, height, radius) {
+    const r = Math.min(radius, width / 2, height / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + width, y, x + width, y + height, r);
+    ctx.arcTo(x + width, y + height, x, y + height, r);
+    ctx.arcTo(x, y + height, x, y, r);
+    ctx.arcTo(x, y, x + width, y, r);
+    ctx.closePath();
+  },
+
+  _vizRenderBoxplot(payload) {
+    const svg = document.getElementById('viz-boxplot-svg');
+    const subtitle = document.getElementById('viz-boxplot-subtitle');
+    const statsEl = document.getElementById('viz-boxplot-stats');
+    if (!svg || !subtitle || !statsEl) return;
+    const stats = payload.stats || {};
+    const width = 820;
+    const height = 310;
+    const margin = { left: 72, right: 44, top: 34, bottom: 86 };
+    const axisY = 224;
+    const boxTop = 82;
+    const boxBottom = 150;
+    const yMid = (boxTop + boxBottom) / 2;
+    let domainMin = Math.min(stats.min, stats.whisker_low, stats.q1, stats.median, stats.q3, stats.whisker_high, stats.max);
+    let domainMax = Math.max(stats.min, stats.whisker_low, stats.q1, stats.median, stats.q3, stats.whisker_high, stats.max);
+    if (!(domainMax > domainMin)) {
+      const pad = Math.max(Math.abs(domainMax) * 0.05, 1.0);
+      domainMin -= pad;
+      domainMax += pad;
+    }
+    const innerWidth = width - margin.left - margin.right;
+    const scale = value => margin.left + ((value - domainMin) / (domainMax - domainMin)) * innerWidth;
+    const ticks = [stats.min, stats.q1, stats.median, stats.q3, stats.max]
+      .map((value, index) => ({
+        value,
+        index,
+        label: this._vizFormatNumber(value),
+        x: scale(value),
+        lane: 0,
+      }))
+      .sort((a, b) => a.x - b.x || a.index - b.index);
+    const laneRight = [-Infinity, -Infinity, -Infinity, -Infinity];
+    ticks.forEach(tick => {
+      const labelWidth = Math.max(42, tick.label.length * 7);
+      let lane = laneRight.findIndex(right => tick.x - labelWidth / 2 > right + 8);
+      if (lane < 0) lane = laneRight.indexOf(Math.min(...laneRight));
+      tick.lane = lane;
+      laneRight[lane] = tick.x + labelWidth / 2;
+    });
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    subtitle.textContent = `${payload.label} · A 场景：${payload.selection_a?.scalar_label || '-'} · B 场景：${payload.selection_b?.scalar_label || '-'}`;
+    svg.innerHTML = `
+      <rect x="0" y="0" width="${width}" height="${height}" rx="14" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.08)" />
+      <line x1="${margin.left}" y1="${axisY}" x2="${width - margin.right}" y2="${axisY}" stroke="rgba(255,255,255,0.18)" stroke-width="2" />
+      <line x1="${scale(stats.whisker_low)}" y1="${yMid}" x2="${scale(stats.whisker_high)}" y2="${yMid}" stroke="rgba(191,219,254,0.95)" stroke-width="4" stroke-linecap="round" />
+      <line x1="${scale(stats.whisker_low)}" y1="${boxTop + 10}" x2="${scale(stats.whisker_low)}" y2="${boxBottom - 10}" stroke="rgba(191,219,254,0.95)" stroke-width="3" />
+      <line x1="${scale(stats.whisker_high)}" y1="${boxTop + 10}" x2="${scale(stats.whisker_high)}" y2="${boxBottom - 10}" stroke="rgba(191,219,254,0.95)" stroke-width="3" />
+      <rect x="${scale(stats.q1)}" y="${boxTop}" width="${Math.max(2, scale(stats.q3) - scale(stats.q1))}" height="${boxBottom - boxTop}" rx="10" fill="rgba(59,130,246,0.22)" stroke="rgba(96,165,250,0.95)" stroke-width="2.5" />
+      <line x1="${scale(stats.median)}" y1="${boxTop}" x2="${scale(stats.median)}" y2="${boxBottom}" stroke="rgba(248,250,252,0.95)" stroke-width="3" />
+      ${ticks.map(tick => `
+        <line x1="${tick.x}" y1="${axisY}" x2="${tick.x}" y2="${axisY + 8 + tick.lane * 12}" stroke="rgba(255,255,255,0.2)" stroke-width="2" />
+        <text x="${tick.x}" y="${axisY + 28 + tick.lane * 17}" fill="rgba(226,232,240,0.92)" font-size="12" text-anchor="middle">${tick.label}</text>
+      `).join('')}
+      <text x="${margin.left}" y="${margin.top}" fill="rgba(255,255,255,0.65)" font-size="12">离群点: ${stats.outlier_count}</text>
+      <text x="${width - margin.right}" y="${margin.top}" fill="rgba(255,255,255,0.65)" font-size="12" text-anchor="end">n = ${stats.count}</text>
+    `;
+    const items = [
+      ['样本数', stats.count],
+      ['均值', this._vizFormatNumber(stats.mean)],
+      ['标准差', this._vizFormatNumber(stats.std)],
+      ['Q1', this._vizFormatNumber(stats.q1)],
+      ['中位数', this._vizFormatNumber(stats.median)],
+      ['Q3', this._vizFormatNumber(stats.q3)],
+      ['下须', this._vizFormatNumber(stats.whisker_low)],
+      ['上须', this._vizFormatNumber(stats.whisker_high)],
+      ['最小值', this._vizFormatNumber(stats.min)],
+      ['最大值', this._vizFormatNumber(stats.max)],
+    ];
+    statsEl.innerHTML = items.map(([label, value]) => `
+      <div class="viz-stat-card">
+        <div class="viz-stat-label">${UI.escapeHtml(String(label))}</div>
+        <div class="viz-stat-value">${UI.escapeHtml(String(value))}</div>
+      </div>
+    `).join('');
+  },
+
+  _vizFormatNumber(value) {
+    if (!Number.isFinite(value)) return '-';
+    const abs = Math.abs(value);
+    if ((abs >= 1e4) || (abs > 0 && abs < 1e-3)) return value.toExponential(3);
+    if (abs >= 100) return value.toFixed(2);
+    if (abs >= 1) return value.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
+    return value.toFixed(6).replace(/0+$/, '').replace(/\.$/, '');
+  },
+
+  _vizFrameLabel(info, frameOverride = null) {
+    const nFrames = Math.max(1, Number(info?.n_frames || 0));
+    const activeFrame = Math.max(0, Math.min(
+      Number(frameOverride ?? (info?.active_frame || 0)),
+      nFrames - 1,
+    ));
+    const labels = Array.isArray(info?.frame_labels) ? info.frame_labels : [];
+    if (labels.length > activeFrame && labels[activeFrame]) {
+      return labels[activeFrame];
+    }
+    const detail = this._vizFrameDetail(info, activeFrame);
+    if (detail?.full) return String(detail.full);
+    if (this._vizIsShakedownInfo(info)) {
+      return `Load frame ${activeFrame + 1}/${nFrames}`;
+    }
+    const frameText = `${activeFrame + 1}/${nFrames}`;
+    if (nFrames <= 1) return frameText;
+    const times = Array.isArray(info?.frame_times) ? info.frame_times : [];
+    if (!times.length) return frameText;
+    const currentTime = Number(times[Math.min(activeFrame, times.length - 1)]);
+    const totalTime = Number(times[times.length - 1]);
+    if (!Number.isFinite(currentTime) || !Number.isFinite(totalTime)) return frameText;
+    return `${frameText} time=${this._vizFormatTimeValue(currentTime)}/${this._vizFormatTimeValue(totalTime)}`;
+  },
+
+  _vizIsShakedownInfo(info) {
+    const active = String(info?.active_field || '');
+    if (active.startsWith('shakedown_') || active.startsWith('rsdms_')) return true;
+    const fields = Array.isArray(info?.fields) ? info.fields : [];
+    return fields.some(key => {
+      const text = String(key);
+      return text.startsWith('shakedown_') || text.startsWith('rsdms_');
+    });
+  },
+
+  _vizFrameDetail(info, frameOverride = null) {
+    const details = Array.isArray(info?.frame_details) ? info.frame_details : [];
+    if (!details.length) return null;
+    const nFrames = Math.max(1, Number(info?.n_frames || details.length));
+    const activeFrame = Math.max(0, Math.min(
+      Number(frameOverride ?? (info?.active_frame || 0)),
+      nFrames - 1,
+    ));
+    const detail = details[activeFrame];
+    return detail && typeof detail === 'object' ? detail : null;
+  },
+
+  _vizFrameFullLabel(info, frameOverride = null) {
+    const detail = this._vizFrameDetail(info, frameOverride);
+    if (detail?.full) return String(detail.full);
+    const labels = Array.isArray(info?.frame_labels) ? info.frame_labels : [];
+    const nFrames = Math.max(1, Number(info?.n_frames || labels.length));
+    const activeFrame = Math.max(0, Math.min(
+      Number(frameOverride ?? (info?.active_frame || 0)),
+      nFrames - 1,
+    ));
+    return labels[activeFrame] || this._vizFrameLabel(info, activeFrame);
+  },
+
+  _vizUpdateFrameButtons(slot, info) {
+    const nFrames = Math.max(1, Number(info?.n_frames || 0));
+    const enabled = nFrames > 1;
+    ['prev', 'next', 'play'].forEach(kind => {
+      const btn = document.getElementById(`viz-frame-${kind}-${slot}`);
+      if (btn) btn.disabled = !enabled;
+    });
+    if (!enabled) this._vizStopPlayback(slot);
+  },
+
+  _vizUpdateFrameDetailButton(slot, info) {
+    const btn = document.getElementById(`viz-frame-detail-${slot}`);
+    if (!btn) return;
+    const full = this._vizFrameFullLabel(info);
+    const enabled = this._vizIsShakedownInfo(info) && !!full;
+    btn.style.display = enabled ? '' : 'none';
+    btn.disabled = !enabled;
+    btn.title = enabled ? full : '';
+  },
+
+  _vizUpdateFrameAxisLabel(slot, info) {
+    const slider = document.getElementById(`viz-frame-slider-${slot}`);
+    const group = slider?.closest('.viz-group');
+    const label = group?.querySelector('.viz-group-label');
+    if (label) label.textContent = this._vizIsShakedownInfo(info) ? '载荷帧' : '帧';
+  },
+
+  _vizFormatTimeValue(value) {
+    if (!Number.isFinite(value)) return '-';
+    const abs = Math.abs(value);
+    if ((abs >= 1e4) || (abs > 0 && abs < 1e-4)) return value.toExponential(3);
+    return value.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
+  },
+
+  async _vizDownloadScreenshot(slot) {
+    this._vizSetStatus('正在生成截图...');
+    try {
+      const res = await fetch('/api/viz/screenshot', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({slot, scale: 4, dpi: 300}),
+      });
+      if (!res.ok) throw new Error('截图导出失败');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `viz_${slot}_screenshot.png`;
+      a.click();
+      URL.revokeObjectURL(url);
+      this._vizSetStatus('截图已下载');
+    } catch (err) {
+      this._vizSetStatus(`截图导出失败：${err.message}`);
+    }
+  },
+
 };
+
+window.App = App;
 
 // Boot
 document.addEventListener('DOMContentLoaded', () => App.init());

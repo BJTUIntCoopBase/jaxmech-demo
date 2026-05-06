@@ -329,5 +329,10 @@ def export_shakedown_mat(
         merged.update(mat_dict)
         mat_dict = merged
 
+    from jaxmech.model.viz_manifest import attach_viz_manifest
+    from jaxmech.modules.shakedown.visualize_mat import build_shakedown_viz_manifest
+
+    attach_viz_manifest(mat_dict, build_shakedown_viz_manifest(mat_dict))
+
     sio.savemat(out_mat_path, mat_dict, do_compression=True)
     return out_mat_path

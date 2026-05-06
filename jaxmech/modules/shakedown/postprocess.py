@@ -80,5 +80,10 @@ def save_shakedown_summary(
     if metadata:
         for key, value in metadata.items():
             payload[f"meta_{key}"] = np.asarray([value]) if isinstance(value, str) else np.asarray(value)
+
+    from jaxmech.model.viz_manifest import attach_viz_manifest
+    from jaxmech.modules.shakedown.visualize_mat import build_shakedown_viz_manifest
+
+    attach_viz_manifest(payload, build_shakedown_viz_manifest(payload))
     sio.savemat(str(out_path), payload, do_compression=True)
     return out_path

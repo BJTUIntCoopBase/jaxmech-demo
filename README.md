@@ -12,6 +12,7 @@ A minimal demo of the **jaxmech** computational mechanics library, showcasing:
 - **3D Solid Linear Elastic Analysis** — Finite element analysis using JAX
 - **Shakedown Analysis** — Lower-bound shakedown via SOCP (C formulation, CVXPY/Clarabel)
 - **Web UI** — Browser-based interface for model management, analysis submission, and result inspection
+- **MAT Field Visualization** — Browser-based 3D visualization for generated elastic and shakedown MAT results
 
 ### Supported Features
 
@@ -22,6 +23,7 @@ A minimal demo of the **jaxmech** computational mechanics library, showcasing:
 | Shakedown C Formulation (CVXPY) | ✅ |
 | ABAQUS INP Parsing | ✅ |
 | Web Dashboard | ✅ |
+| MAT Field Visualization | ✅ |
 | Shell Elements | 🔒 Full version |
 | Plastic Material Models | 🔒 Full version |
 | Direct Cyclic Analysis | 🔒 Full version |
@@ -66,6 +68,8 @@ Dependency files shipped with the repo:
 
 Notes:
 
+- The Web dependency set now includes `pyvista`, `vtk`, `Pillow`, `meshio`,
+  and `playwright` so the demo can render MAT fields from the browser.
 - `requirements-wsl.txt` installs `jax[cpu]` for a reproducible CPU demo setup.
 - If you already manage a CUDA-enabled JAX environment, keep that environment
 	and only set `wsl_python` in `Config/env.cfg`.
@@ -93,6 +97,13 @@ Config\start_web.bat
 
 Then open http://127.0.0.1:8080 in your browser.
 
+#### 6. Visualize MAT Results
+
+After running linear elastic or shakedown analysis, open **Field Visualization**
+from the sidebar. Select a generated `.mat` file under `Examples/.../inc_analysis`
+or `Examples/.../shakedown`, choose field variables such as `S`, `E`, `U`,
+`NFORC`, `RS`, `CEQ`, or `CInEQ`, and inspect the result interactively.
+
 ### Included Examples
 
 | Example | Description |
@@ -109,6 +120,7 @@ This is a **minimal demo subset** of jaxmech. The full version includes:
 - Direct Cyclic Analysis (DCA)
 - Gurobi SOCP solver backend
 - ABAQUS ODB validation pipeline
+- Validation A/B visualization against ABAQUS ODB outputs
 - Extended shakedown formulations (MN, Ilyushin, layer-wise)
 - Topology optimization
 - Additional example models
@@ -125,6 +137,7 @@ For the full version or collaboration inquiries, contact: **gengchen@bjtu.edu.cn
 - **三维实体线弹性分析** — 基于 JAX 的有限元分析
 - **安定分析** — 基于 SOCP 的下限安定性分析（C 公式，CVXPY/Clarabel）
 - **Web 界面** — 模型管理、分析提交、结果查看的浏览器界面
+- **MAT 场变量可视化** — 在浏览器中查看 demo 生成的弹性与安定分析 MAT 结果
 
 ### 功能一览
 
@@ -135,6 +148,7 @@ For the full version or collaboration inquiries, contact: **gengchen@bjtu.edu.cn
 | 安定分析 C 公式（CVXPY） | ✅ |
 | ABAQUS INP 解析 | ✅ |
 | Web 工作台 | ✅ |
+| MAT 场变量可视化 | ✅ |
 | 壳单元 | 🔒 完整版 |
 | 弹塑性材料模型 | 🔒 完整版 |
 | 直接循环分析（DCA） | 🔒 完整版 |
@@ -178,6 +192,8 @@ powershell -ExecutionPolicy Bypass -File .\Config\setup_demo_env.ps1 `
 
 说明：
 
+- Web 依赖已包含 `pyvista`、`vtk`、`Pillow`、`meshio` 和 `playwright`，
+  用于在浏览器中渲染 MAT 场变量。
 - `requirements-wsl.txt` 默认安装 `jax[cpu]`，适合作为公开 demo 的 CPU 环境。
 - 如果你已经维护了 CUDA 版 JAX 环境，保留该环境即可，只需在 `Config/env.cfg` 中设置 `wsl_python`。
 - `Config/start_web.bat` 也会按需自动安装 `requirements-web.txt`，但首次使用仍推荐先运行 `Config/setup_demo_env.ps1`。
@@ -203,6 +219,12 @@ Config\start_web.bat
 
 在浏览器中打开 http://127.0.0.1:8080。
 
+#### 6. 查看 MAT 可视化
+
+运行线弹性分析或安定分析后，从侧边栏进入 **场变量可视化**。选择
+`Examples/.../inc_analysis` 或 `Examples/.../shakedown` 下生成的 `.mat`
+文件，再选择 `S`、`E`、`U`、`NFORC`、`RS`、`CEQ`、`CInEQ` 等场变量进行交互查看。
+
 ### 示例模型
 
 | 示例 | 说明 |
@@ -219,6 +241,7 @@ Config\start_web.bat
 - 直接循环分析（DCA）
 - Gurobi SOCP 求解器后端
 - ABAQUS ODB 对标验证流程
+- 与 ABAQUS ODB 结果对比的 validation A/B 可视化
 - 扩展安定公式（MN、Ilyushin、逐层应力）
 - 拓扑优化
 - 更多示例模型
