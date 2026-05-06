@@ -76,10 +76,19 @@ const App = {
     this.navigate('models');
   },
 
+  moduleCard(id, icon, title, desc, locked = false) {
+    return `
+      <div class="module-card ${locked ? 'locked' : ''}" onclick="App.navigate('${id}')">
+        <div class="module-icon">${icon}</div>
+        <div class="module-title">${UI.escapeHtml(title)}</div>
+        <div class="module-desc">${UI.escapeHtml(desc)}</div>
+        <button class="module-action">${locked ? '查看说明' : '打开'}</button>
+      </div>`;
+  },
+
   renderDashboard() {
-    const el = document.getElementById('dashboard-content');
     const active = this.activeModel?.name || '未选择';
-    el.innerHTML = `
+    document.getElementById('dashboard-content').innerHTML = `
       ${UI.header('jaxmech demo', '实体单元弹性 inc_analysis、CVXPY shakedown、Web 端和 MAT 可视化')}
       <div class="status-grid">
         ${UI.statusCard('EL', '弹性分析', 'Solid linear elastic')}
@@ -95,19 +104,8 @@ const App = {
       </div>`;
   },
 
-  moduleCard(id, icon, title, desc, locked = false) {
-    return `
-      <div class="module-card ${locked ? 'locked' : ''}" onclick="App.navigate('${id}')">
-        <div class="module-icon">${icon}</div>
-        <div class="module-title">${UI.escapeHtml(title)}</div>
-        <div class="module-desc">${UI.escapeHtml(desc)}</div>
-        <button class="module-action">${locked ? '查看说明' : '打开'}</button>
-      </div>`;
-  },
-
   renderModels() {
-    const el = document.getElementById('models-content');
-    el.innerHTML = `
+    document.getElementById('models-content').innerHTML = `
       ${UI.header('模型浏览', 'Examples/ 与 StoredModels/ 中的 demo 模型')}
       <div class="model-list">
         ${this.models.length ? this.models.map((model) => UI.modelItem(model)).join('') : UI.empty('暂无模型')}
@@ -128,13 +126,12 @@ const App = {
   },
 
   renderElastic() {
-    const el = document.getElementById('elastic-content');
     if (!this.activeModel) {
-      el.innerHTML = `${UI.header('弹性 inc_analysis', '请选择一个模型')}${UI.empty('尚未选择模型')}`;
+      document.getElementById('elastic-content').innerHTML = `${UI.header('弹性 inc_analysis', '请选择一个模型')}${UI.empty('尚未选择模型')}`;
       return;
     }
     const cfg = this.cfgPath('inc_analysis');
-    el.innerHTML = `
+    document.getElementById('elastic-content').innerHTML = `
       ${UI.header('弹性 inc_analysis', '仅支持实体单元 linear elastic，结果写入 inc_analysis/*.mat')}
       <div class="panel">
         <p><strong>模型</strong> ${UI.escapeHtml(this.activeModel.name)}</p>
@@ -145,13 +142,12 @@ const App = {
   },
 
   renderShakedown() {
-    const el = document.getElementById('shakedown-content');
     if (!this.activeModel) {
-      el.innerHTML = `${UI.header('Shakedown', '请选择一个模型')}${UI.empty('尚未选择模型')}`;
+      document.getElementById('shakedown-content').innerHTML = `${UI.header('Shakedown', '请选择一个模型')}${UI.empty('尚未选择模型')}`;
       return;
     }
     const cfg = this.cfgPath('shakedown');
-    el.innerHTML = `
+    document.getElementById('shakedown-content').innerHTML = `
       ${UI.header('Shakedown', '仅支持实体单元、C formulation、CVXPY/Clarabel backend')}
       <div class="panel">
         <p><strong>模型</strong> ${UI.escapeHtml(this.activeModel.name)}</p>
@@ -168,9 +164,8 @@ const App = {
   },
 
   async renderTasks() {
-    const el = document.getElementById('tasks-content');
     const tasks = await this.api('/api/tasks').catch(() => []);
-    el.innerHTML = `
+    document.getElementById('tasks-content').innerHTML = `
       ${UI.header('任务管理', '查看分析任务、日志和产物')}
       <div class="task-list">${tasks.length ? tasks.map((task) => UI.taskItem(task)).join('') : UI.empty('暂无任务')}</div>
       <div id="task-detail" style="margin-top:16px"></div>`;
@@ -198,10 +193,9 @@ const App = {
   },
 
   async renderVisualization() {
-    const el = document.getElementById('viz-content');
     const mats = this.activeModel ? await this.scanMats() : [];
     const options = mats.map((item) => `<option value="${UI.escapeAttr(item.abs_path)}">${UI.escapeHtml(item.rel_path)}</option>`).join('');
-    el.innerHTML = `
+    document.getElementById('viz-content').innerHTML = `
       ${UI.header('MAT 场变量可视化', '加载 elastic 或 shakedown MAT，查看场变量和 A/B 对比')}
       <div class="viz-layout">
         <div class="panel viz-controls">
@@ -216,9 +210,7 @@ const App = {
           <canvas id="viz-canvas-a" width="800" height="600"></canvas>
         </div>
       </div>`;
-    if (mats.length) {
-      this.selectedMat = mats[0].abs_path;
-    }
+    if (mats.length) this.selectedMat = mats[0].abs_path;
   },
 
   async scanMats() {
@@ -290,9 +282,68 @@ const App = {
 
   async renderSettings() {
     const status = await this.api('/api/status').catch(() => null);
+    const libs = status?.python_libraries?.libraries || {};
+    const missing = status?.python_libraries?.missing_libraries || [];
+    const rows = Object.entries(libs).map(([name, info]) => `
+      <div class="settings-lib-row">
+        <div>
+          <strong>${UI.escapeHtml(name)}</strong>
+          <span>${UI.escapeHtml(info.required_for || '')}</span>
+        </div>
+        <div class="settings-lib-state ${info.available ? 'ok' : 'missing'}">
+          ${info.available ? `已安装 ${UI.escapeHtml(info.version || '')}` : '待安装'}
+        </div>
+      </div>`).join('');
     document.getElementById('settings-content').innerHTML = `
-      ${UI.header('设置', '环境检测')}
-      <div class="panel"><pre>${UI.escapeHtml(JSON.stringify(status, null, 2))}</pre></div>`;
+      ${UI.header('设置', '环境检测与依赖安装')}
+      <div class="settings-actions">
+        <button class="btn btn-primary" onclick="App.renderSettings()">一键自动检测</button>
+        <button id="settings-install-all" class="btn btn-secondary" onclick="App.installSupportedLibraries()">一键安装所有支持库</button>
+      </div>
+      <div id="settings-install-status" class="settings-install-status"></div>
+      <div class="status-grid">
+        ${UI.statusCard('WSL', 'WSL', status?.wsl?.available ? '可用' : '未就绪', status?.wsl?.available ? 'green' : 'amber')}
+        ${UI.statusCard('JAX', 'WSL JAX', status?.jax?.available ? status.jax.version : '未检测到', status?.jax?.available ? 'green' : 'amber')}
+        ${UI.statusCard('PY', 'Windows Python', status?.windows_python?.version || '未知', 'blue')}
+        ${UI.statusCard('LIB', '支持库', missing.length ? `缺少 ${missing.length} 个` : '已齐全', missing.length ? 'amber' : 'green')}
+      </div>
+      <div class="panel settings-panel">
+        <h3>Windows Web 支持库</h3>
+        <p>安装按钮会自动补齐缺失项；即使没有先做检测，也会按 demo 支持库清单重新检查并安装缺失库。</p>
+        <div class="settings-lib-list">${rows || UI.empty('暂未获得检测结果')}</div>
+      </div>
+      <div class="panel settings-panel">
+        <h3>原始检测结果</h3>
+        <pre>${UI.escapeHtml(JSON.stringify(status, null, 2))}</pre>
+      </div>`;
+  },
+
+  async installSupportedLibraries() {
+    const button = document.getElementById('settings-install-all');
+    const statusEl = document.getElementById('settings-install-status');
+    if (button) {
+      button.disabled = true;
+      button.textContent = '正在安装...';
+    }
+    if (statusEl) statusEl.textContent = '正在检查并补齐 demo 支持库，这可能需要几分钟。';
+    try {
+      const result = await this.api('/api/status/install-missing-libraries', { method: 'POST', body: '{}' });
+      const failed = (result.results || []).filter((item) => !item.success);
+      if (statusEl) {
+        statusEl.textContent = failed.length
+          ? `安装完成，但有 ${failed.length} 项失败；请查看下方检测结果。`
+          : `安装完成：${result.success_count}/${result.total_count} 项已补齐。`;
+      }
+      await this.renderSettings();
+    } catch (err) {
+      if (statusEl) statusEl.textContent = `安装失败：${err.message || err}`;
+    } finally {
+      const nextButton = document.getElementById('settings-install-all');
+      if (nextButton) {
+        nextButton.disabled = false;
+        nextButton.textContent = '一键安装所有支持库';
+      }
+    }
   },
 
   renderLocked(page) {
