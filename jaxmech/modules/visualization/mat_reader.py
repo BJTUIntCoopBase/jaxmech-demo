@@ -3147,21 +3147,49 @@ def _guess_inp_candidates(mat_path: Path, raw: dict) -> list[Path]:
 @lru_cache(maxsize=32)
 def _load_mesh_from_inp(inp_path: str) -> tuple[Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray]]:
     from jaxmech.io.abaqus.inp import parse_inp
-    from jaxmech.model.result import _mesh_to_viz_dict
 
     model = parse_inp(inp_path)
-    mesh_dict = _mesh_to_viz_dict(model.mesh)
-    points = mesh_dict.get("viz_points")
-    cells = mesh_dict.get("viz_cells")
-    cell_types = mesh_dict.get("viz_cell_types")
-    ele_types = mesh_dict.get("viz_cell_block_ele_types")
-    if points is None or cells is None or cell_types is None:
+    mesh = model.mesh
+    points = np.asarray(getattr(mesh, "nodes", None), dtype=np.float64)
+    if points.size == 0:
+        return None, None, None, None
+
+    all_cells: list[np.ndarray] = []
+    all_types: list[int] = []
+    all_ele_types: list[str] = []
+    for block in getattr(mesh, "blocks", []):
+        ele_key = str(getattr(block, "ele_type", "") or "").upper()
+        vtk_type = _ABAQUS_TO_VTK.get(ele_key)
+        if vtk_type is None:
+            cell_key = str(getattr(block, "cell_type", "") or "").lower()
+            if "hex" in cell_key:
+                vtk_type = 12
+            elif "tet" in cell_key:
+                vtk_type = 10
+            elif "wedge" in cell_key or "penta" in cell_key:
+                vtk_type = 13
+            elif "quad" in cell_key:
+                vtk_type = 9
+            elif "tri" in cell_key:
+                vtk_type = 5
+            else:
+                vtk_type = 12
+        conn = np.asarray(getattr(block, "connectivity", []), dtype=np.int64)
+        if conn.ndim != 2 or conn.size == 0:
+            continue
+        n_cells, npe = conn.shape
+        prefix = np.full((n_cells, 1), npe, dtype=np.int64)
+        all_cells.append(np.hstack([prefix, conn]))
+        all_types.extend([int(vtk_type)] * n_cells)
+        all_ele_types.extend([ele_key] * n_cells)
+
+    if not all_cells:
         return None, None, None, None
     return (
-        np.asarray(points, dtype=np.float64),
-        np.asarray(cells, dtype=np.int64),
-        np.asarray(cell_types, dtype=np.int32),
-        np.asarray(ele_types, dtype=object) if ele_types is not None else None,
+        points,
+        np.concatenate(all_cells).reshape(-1).astype(np.int64),
+        np.asarray(all_types, dtype=np.int32),
+        np.asarray(all_ele_types, dtype=object),
     )
 
 
