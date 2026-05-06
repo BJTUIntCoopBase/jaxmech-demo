@@ -390,15 +390,9 @@ def _equivalent_strain_3(eps: np.ndarray) -> np.ndarray:
 
 def _classify_field_kind(field_key: Optional[str]) -> str:
     key = str(field_key or "").lower()
-    if "peeq" in key:
-        return "scalar"
-    if "generalized_stress" in key or "generalized_strain" in key:
-        return "vector"
-    if key.startswith(("rsdms_sf_", "rsdms_sm_", "rsdms_ge_", "rsdms_gk_")):
-        return "vector"
-    if "stress" in key or key.startswith(("rsdms_s_res", "rsdms_s_tot", "rsdm_s_res", "rsdm_s_tot", "rsdm_xs_", "rsdms_xs_")):
+    if "stress" in key:
         return "stress"
-    if "strain" in key or key.startswith(("rsdms_e_res", "rsdms_e_tot", "rsdm_e_res", "rsdm_e_tot")):
+    if "strain" in key:
         return "strain"
     if key in {"u", "frame_u", "elastic_u", "solid_u_nodal"} or "displacement" in key:
         return "vector"
@@ -407,7 +401,7 @@ def _classify_field_kind(field_key: Optional[str]) -> str:
         or "reaction" in key
         or "internal_force" in key
         or "force" in key
-        or key in {"rsdms_ceq", "rsdms_ferror", "rsdm_ceq", "rsdm_ferror"}
+        or key in {"shakedown_equality_violation"}
     ):
         return "vector"
     return "other"

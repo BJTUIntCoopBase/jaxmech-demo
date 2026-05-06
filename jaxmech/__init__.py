@@ -1,17 +1,11 @@
-"""
-jaxmech - A JAX-based general-purpose computational mechanics library.
+"""jaxmech demo package.
 
-Modules:
-    io        - External format I/O (ABAQUS inp/odb, meshio, etc.)
-    model     - Unified data model (Mesh, Model, AnalysisResult, ...)
-    fem       - Finite element core (elements, quadrature, assembly, solver)
-    materials - Constitutive models (elastic, plasticity, crystal plasticity, ...)
-    modules   - High-level analysis modules (shakedown, validation, topopt, ...)
-    optimize  - Optimization backend interfaces (CVXPY, Gurobi, ...)
+This public demo contains solid elastic inc_analysis, solid CVXPY shakedown,
+the Web UI, and MAT visualization.
 """
 
 from jaxmech.env.env import ensure_env_cfg_exists
 
-__version__ = "0.1.0-dev"
+__version__ = "0.2.1-demo"
 
 ensure_env_cfg_exists()

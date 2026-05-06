@@ -49,66 +49,23 @@ _STRAIN_COMP_3 = ["E11", "E22", "E12"]
 _DISP_COMP = ["Ux", "Uy", "Uz"]
 _FORCE_COMP = ["Fx", "Fy", "Fz"]
 _FORCE_COMP_6 = ["F1", "F2", "F3", "M1", "M2", "M3"]
-_SHELL_COMP_3 = ["11", "22", "12"]
-
-
-def _is_rsdms_layer_stress(key_lower: str) -> bool:
-    return key_lower.startswith(("rsdms_s_res", "rsdms_s_tot", "rsdm_s_res", "rsdm_s_tot"))
-
-
-def _is_rsdms_layer_strain(key_lower: str) -> bool:
-    return key_lower.startswith(("rsdms_e_res", "rsdms_e_tot", "rsdm_e_res", "rsdm_e_tot"))
-
-
-def _is_rsdms_generalized(key_lower: str) -> bool:
-    return key_lower.startswith(("rsdms_sf_", "rsdms_sm_", "rsdms_ge_", "rsdms_gk_"))
-
-
-def _is_rsdm_excess(key_lower: str) -> bool:
-    return key_lower.startswith(("rsdm_xs_", "rsdms_xs_"))
-
-
 def _component_tag(fi: FieldInfo, comp: int) -> str:
     """Return a human-readable component tag for the colorbar title."""
     key_lower = fi.key.lower()
     label_lower = (fi.label or "").lower()
     text = f"{key_lower} {label_lower}"
     nc = fi.n_components
-    is_stress = "stress" in text or _is_rsdms_layer_stress(key_lower)
-    is_strain = "strain" in text or "peeq" in text or _is_rsdms_layer_strain(key_lower)
+    is_stress = "stress" in text
+    is_strain = "strain" in text
     is_disp = "displacement" in text or key_lower in {
         "u",
         "frame_u",
         "elastic_u",
         "solid_u_nodal",
-        "shell_u_nodal",
-        "validation_jax_u",
-        "validation_abaqus_u",
     }
     is_force = "nforc" in text or "reaction" in text or "force" in text or key_lower in {
-        "rsdms_ceq",
-        "rsdms_ferror",
+        "shakedown_equality_violation",
     }
-    if "shell generalized stress" in text and nc == 6:
-        labels = ["SF11", "SF22", "SF12", "SM11", "SM22", "SM12"]
-        if 0 <= comp < len(labels):
-            return labels[comp]
-    if "shell generalized strain" in text and nc == 6:
-        labels = ["GE11", "GE22", "GE12", "GK11", "GK22", "GK12"]
-        if 0 <= comp < len(labels):
-            return labels[comp]
-    if "shell displacement" in text and nc == 6:
-        labels = ["U1", "U2", "U3", "UR1", "UR2", "UR3"]
-        if 0 <= comp < len(labels):
-            return labels[comp]
-    for prefix, tokens in (
-        ("SF", ("generalized_stress_sf", "generalized_residual_sf", "generalized_total_sf", "rsdms_sf_", "shakedown_sf_")),
-        ("SM", ("generalized_stress_sm", "generalized_residual_sm", "generalized_total_sm", "rsdms_sm_", "shakedown_sm_")),
-        ("GE", ("generalized_strain_ge", "rsdms_ge_")),
-        ("GK", ("generalized_strain_gk", "rsdms_gk_")),
-    ):
-        if any(token in key_lower for token in tokens) and nc == 3 and 0 <= comp < len(_SHELL_COMP_3):
-            return f"{prefix}{_SHELL_COMP_3[comp]}"
     if is_stress:
         labels = _STRESS_COMP_6 if nc == 6 else (_STRESS_COMP_3 if nc == 3 else None)
         if labels and 0 <= comp < len(labels):
@@ -118,14 +75,11 @@ def _component_tag(fi: FieldInfo, comp: int) -> str:
         if labels and 0 <= comp < len(labels):
             return labels[comp]
     elif is_disp:
-        labels = ["U1", "U2", "U3"] if key_lower.startswith("validation_") else _DISP_COMP
+        labels = _DISP_COMP
         if 0 <= comp < len(labels):
             return labels[comp]
     elif is_force:
-        if key_lower.startswith("validation_"):
-            labels = ["NFORC1", "NFORC2", "NFORC3"] if nc != 6 else ["F1", "F2", "F3", "M1", "M2", "M3"]
-        else:
-            labels = _FORCE_COMP_6 if nc == 6 else _FORCE_COMP
+        labels = _FORCE_COMP_6 if nc == 6 else _FORCE_COMP
         if 0 <= comp < len(labels):
             return labels[comp]
     return f"comp {comp}"
@@ -137,13 +91,9 @@ def _default_scalar_tag(fi: Optional[FieldInfo]) -> str:
     key_lower = fi.key.lower()
     label_lower = (fi.label or "").lower()
     text = f"{key_lower} {label_lower}"
-    if "generalized_stress" in key_lower or "generalized_strain" in key_lower or _is_rsdms_generalized(key_lower):
-        return "Magnitude"
-    if "shell generalized stress" in text or "shell generalized strain" in text:
-        return "Magnitude"
-    if "stress" in text or _is_rsdms_layer_stress(key_lower) or _is_rsdm_excess(key_lower):
+    if "stress" in text:
         return "Mises"
-    if ("strain" in text or _is_rsdms_layer_strain(key_lower)) and "peeq" not in key_lower:
+    if "strain" in text:
         return "Equivalent"
     if (
         key_lower in {"u", "frame_u", "elastic_u", "solid_u_nodal"}
@@ -151,7 +101,7 @@ def _default_scalar_tag(fi: Optional[FieldInfo]) -> str:
         or "nforc" in text
         or "reaction" in text
         or "force" in text
-        or key_lower in {"rsdms_ceq", "rsdms_ferror"}
+        or key_lower in {"shakedown_equality_violation"}
     ):
         return "Magnitude"
     return ""
@@ -163,38 +113,15 @@ def _field_base_label(fi: Optional[FieldInfo]) -> str:
     key_lower = fi.key.lower()
     label_lower = (fi.label or "").lower()
     text = f"{key_lower} {label_lower}"
-    if "peeq" in text:
-        return "PEEQ"
-    if "shell generalized stress" in text:
-        return "Shell generalized stress"
-    if "shell generalized strain" in text:
-        return "Shell generalized strain"
-    if "stress" in text or _is_rsdms_layer_stress(key_lower):
+    if "stress" in text:
         return "Stress"
-    if _is_rsdm_excess(key_lower):
-        return "Excess stress"
-    if "strain" in text or _is_rsdms_layer_strain(key_lower):
+    if "strain" in text:
         return "Strain"
-    if key_lower.startswith(("rsdms_sf_", "rsdms_sm_", "shakedown_sf_", "shakedown_sm_")) or "generalized_residual_sf" in key_lower or "generalized_total_sf" in key_lower or "generalized_residual_sm" in key_lower or "generalized_total_sm" in key_lower:
-        return "Gen. stress"
-    if key_lower.startswith(("rsdms_ge_", "rsdms_gk_")):
-        return "Gen. strain"
-    if key_lower in {"u", "frame_u", "elastic_u", "solid_u_nodal", "validation_jax_u", "validation_abaqus_u"} or "displacement" in text:
+    if key_lower in {"u", "frame_u", "elastic_u", "solid_u_nodal"} or "displacement" in text:
         return "Displacement"
-    if "force_error" in key_lower or key_lower == "rsdms_ferror":
-        return "Force error"
-    if "nforc" in text or "reaction" in text or "force" in text or key_lower == "rsdms_ceq":
+    if "nforc" in text or "reaction" in text or "force" in text or key_lower == "shakedown_equality_violation":
         return "NFORC"
     return fi.label or fi.key
-
-
-def _validation_side_label(key: str) -> str:
-    key_lower = str(key or "").lower()
-    if key_lower.startswith("validation_jax_"):
-        return "JAX"
-    if key_lower.startswith("validation_abaqus_"):
-        return "ABAQUS"
-    return ""
 
 
 DEFAULT_WINDOW_SIZE = (800, 600)
@@ -793,9 +720,6 @@ class VizScene:
         if fi is None:
             return self._active_field
         label = _field_base_label(fi)
-        side_label = _validation_side_label(fi.key)
-        if side_label and not label.lower().startswith(side_label.lower()):
-            label = f"{side_label} {label}"
         if self._active_component is not None:
             comp = self._active_component
             tag = _component_tag(fi, comp)

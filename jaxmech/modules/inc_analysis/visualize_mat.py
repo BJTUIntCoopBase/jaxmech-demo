@@ -1,4 +1,4 @@
-"""Visualization manifest builders for incremental/elastic analysis MAT files."""
+"""Visualization manifest builders for demo solid elastic MAT files."""
 
 from __future__ import annotations
 
@@ -7,11 +7,7 @@ from typing import Any, Mapping
 
 import numpy as np
 
-from jaxmech.model.viz_manifest import (
-    build_viz_manifest,
-    enrich_field_shapes,
-    field_descriptor,
-)
+from jaxmech.model.viz_manifest import build_viz_manifest, enrich_field_shapes, field_descriptor
 
 
 def _has(payload: Mapping[str, Any], key: str) -> bool:
@@ -39,7 +35,6 @@ def _add_if_present(fields: list[dict[str, Any]], payload: Mapping[str, Any], ke
 
 
 def build_solid_elastic_viz_manifest(payload: Mapping[str, Any]) -> dict[str, Any]:
-    """Declare visual fields written by solid elastic analysis export."""
     fields: list[dict[str, Any]] = []
     _add_if_present(
         fields,
@@ -80,18 +75,6 @@ def build_solid_elastic_viz_manifest(payload: Mapping[str, Any]) -> dict[str, An
     _add_if_present(
         fields,
         payload,
-        "u",
-        label="Displacement",
-        family="displacement",
-        location="node",
-        tensor_kind="vector",
-        n_components=_n_comp(payload, "u", 3),
-        default_selected=True,
-        scalar_options=["components", "magnitude"],
-    )
-    _add_if_present(
-        fields,
-        payload,
         "solid_nforc_nodal",
         label="NFORC",
         family="force",
@@ -99,30 +82,6 @@ def build_solid_elastic_viz_manifest(payload: Mapping[str, Any]) -> dict[str, An
         tensor_kind="vector",
         n_components=_n_comp(payload, "solid_nforc_nodal", 3),
         default_selected=True,
-        scalar_options=["components", "magnitude"],
-    )
-    _add_if_present(
-        fields,
-        payload,
-        "internal_force",
-        label="NFORC",
-        family="force",
-        location="node",
-        tensor_kind="vector",
-        n_components=_n_comp(payload, "internal_force", 3),
-        default_selected=True,
-        scalar_options=["components", "magnitude"],
-    )
-    _add_if_present(
-        fields,
-        payload,
-        "reaction",
-        label="Reaction force",
-        family="reaction",
-        location="node",
-        tensor_kind="vector",
-        n_components=_n_comp(payload, "reaction", 3),
-        default_selected=False,
         scalar_options=["components", "magnitude"],
     )
     return build_viz_manifest(
@@ -133,101 +92,13 @@ def build_solid_elastic_viz_manifest(payload: Mapping[str, Any]) -> dict[str, An
     )
 
 
-def build_shell_elastic_viz_manifest(payload: Mapping[str, Any]) -> dict[str, Any]:
-    """Declare visual fields written by shell elastic analysis export."""
-    fields: list[dict[str, Any]] = []
-    _add_if_present(
-        fields,
-        payload,
-        "gauss_stress",
-        label="Shell generalized stress",
-        family="stress",
-        location="gauss",
-        tensor_kind="stress_voigt",
-        n_components=_n_comp(payload, "gauss_stress", 3),
-        default_selected=True,
-        scalar_options=["components", "mises"],
-    )
-    _add_if_present(
-        fields,
-        payload,
-        "gauss_strain",
-        label="Shell generalized strain",
-        family="strain",
-        location="gauss",
-        tensor_kind="strain_voigt",
-        n_components=_n_comp(payload, "gauss_strain", 3),
-        default_selected=True,
-        scalar_options=["components", "equivalent"],
-    )
-    _add_if_present(
-        fields,
-        payload,
-        "shell_layer_stress",
-        label="Shell layer stress",
-        family="stress",
-        location="gauss",
-        tensor_kind="stress_voigt",
-        n_components=_n_comp(payload, "shell_layer_stress", 3),
-        default_selected=False,
-        scalar_options=["components", "mises"],
-    )
-    _add_if_present(
-        fields,
-        payload,
-        "shell_layer_strain",
-        label="Shell layer strain",
-        family="strain",
-        location="gauss",
-        tensor_kind="strain_voigt",
-        n_components=_n_comp(payload, "shell_layer_strain", 3),
-        default_selected=False,
-        scalar_options=["components", "equivalent"],
-    )
-    _add_if_present(
-        fields,
-        payload,
-        "shell_u_nodal",
-        label="Shell displacement",
-        family="displacement",
-        location="node",
-        tensor_kind="vector",
-        n_components=_n_comp(payload, "shell_u_nodal", 6),
-        default_selected=True,
-        scalar_options=["components", "magnitude"],
-    )
-    _add_if_present(
-        fields,
-        payload,
-        "shell_gen_internal_force",
-        label="Shell generalized NFORC",
-        family="force",
-        location="node",
-        tensor_kind="vector",
-        n_components=_n_comp(payload, "shell_gen_internal_force", 6),
-        default_selected=True,
-        scalar_options=["components", "magnitude"],
-    )
-    return build_viz_manifest(
-        producer_module="jaxmech.modules.inc_analysis",
-        analysis_type="linear_static",
-        family="shell",
-        fields=enrich_field_shapes(fields, payload),
-    )
-
-
 def build_viz_manifest_from_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
-    """Infer the elastic analysis family and return its manifest."""
-    family = str(payload.get("metadata", {}).get("family", "") if isinstance(payload.get("metadata"), dict) else "").lower()
-    if family == "shell" or _has(payload, "shell_u_nodal") or _has(payload, "shell_layer_stress"):
-        return build_shell_elastic_viz_manifest(payload)
     return build_solid_elastic_viz_manifest(payload)
 
 
 def build_viz_manifest_from_mat(mat_path: str | Path) -> dict[str, Any]:
-    """Build a manifest for a legacy elastic analysis MAT."""
     import scipy.io as sio
 
     raw = sio.loadmat(str(Path(mat_path)), squeeze_me=False, struct_as_record=False)
     payload = {key: value for key, value in raw.items() if not key.startswith("__")}
-    return build_viz_manifest_from_payload(payload)
+    return build_solid_elastic_viz_manifest(payload)

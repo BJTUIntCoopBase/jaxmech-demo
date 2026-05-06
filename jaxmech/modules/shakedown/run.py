@@ -15,7 +15,7 @@ def main() -> None:
         "--step",
         choices=("all", "prepare", "collect"),
         default="all",
-        help="Execution step for CVXPY/Gurobi workflows.",
+        help="Execution step. The demo CVXPY workflow supports 'all'.",
     )
     args = parser.parse_args()
 

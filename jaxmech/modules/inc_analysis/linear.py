@@ -163,17 +163,18 @@ def solve_linear_step(
     """Solve a single linearized increment with already-resolved material data."""
     t_start = time.time()
 
-    family = model.metadata.get("family", "solid")
-    is_shell = family == "shell"
+    family = str(model.metadata.get("family", "solid")).lower()
+    if family != "solid":
+        raise ValueError("The demo linear solver supports solid models only.")
     dimension = model.metadata.get("dimension", 3)
-    ndof_per_node = 6 if is_shell else dimension
+    ndof_per_node = dimension
     n_nodes = model.mesh.n_nodes
     total_dofs = n_nodes * ndof_per_node
 
     props = material.to_dict(use_b_ext=use_b_ext, gauss_order=gauss_order)
 
     print(
-        f"\n[{'Shell' if is_shell else 'Solid'} Linear] "
+        f"\n[Solid Linear] "
         f"increment={increment_index}/{n_increments}, load_scale={load_scale:.3f}",
         flush=True,
     )
@@ -236,15 +237,12 @@ def solve_linear_step(
     print(f"  [Recovery] Finished in {t_recover + t_geometry:.2f}s", flush=True)
 
     n_str = int(gauss_stress.shape[-1]) if gauss_stress.size else 6
-    c_sparse = None
-    free_dofs_array = np.asarray(free_dofs, dtype=np.int32)
-    if not is_shell:
-        c_sparse, free_dofs_array, n_str = build_solid_c_sparse(
-            model,
-            ndof_per_node=ndof_per_node,
-            use_b_ext=use_b_ext,
-            thickness=float(material.thickness),
-        )
+    c_sparse, free_dofs_array, n_str = build_solid_c_sparse(
+        model,
+        ndof_per_node=ndof_per_node,
+        use_b_ext=use_b_ext,
+        thickness=float(material.thickness),
+    )
     print(f"  [Finish] Total Time: {time.time() - t_start:.2f}s", flush=True)
 
     return AnalysisResult(

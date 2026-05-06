@@ -1758,3 +1758,90 @@ a:hover { text-decoration: underline; }
     grid-template-columns: 42px minmax(220px, 1.6fr) 90px 90px 130px 110px 160px 130px 120px;
   }
 }
+
+.active-model-card {
+  margin-top: 15px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.active-model-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.active-model-name {
+  margin-top: 4px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-item.locked {
+  opacity: 0.72;
+}
+
+.lock-mark {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.panel {
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.viz-layout {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 16px;
+  min-height: 680px;
+}
+
+.viz-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.viz-controls select,
+.viz-controls button {
+  width: 100%;
+}
+
+.viz-canvas-wrap {
+  min-height: 620px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+#viz-canvas-a {
+  width: 100%;
+  height: auto;
+  background: #ffffff;
+}
+
+.log-box {
+  max-height: 360px;
+  overflow: auto;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 8px;
+  font-family: Consolas, monospace;
+  font-size: 12px;
+}
