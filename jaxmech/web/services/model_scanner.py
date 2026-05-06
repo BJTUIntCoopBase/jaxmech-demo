@@ -19,11 +19,15 @@ def _model_status(model_dir: Path) -> dict[str, Any]:
     """Inspect one model directory for the demo-supported workflows only."""
     abaqus_dir = model_dir / "abaqus"
     inc_dir = model_dir / "inc_analysis"
+    val_dir = model_dir / "validation"
     sd_dir = model_dir / "shakedown"
 
     inp_files = sorted(abaqus_dir.glob("*.inp")) if abaqus_dir.is_dir() else []
     inc_mats = sorted(inc_dir.glob("*.mat")) if inc_dir.is_dir() else []
+    val_mats = sorted(val_dir.rglob("*.mat")) if val_dir.is_dir() else []
     sd_mats = sorted(sd_dir.rglob("*.mat")) if sd_dir.is_dir() else []
+    inc_names = {path.name for path in inc_mats}
+    validated_names = inc_names & {path.name for path in val_mats}
 
     return {
         "name": model_dir.name,
@@ -37,6 +41,13 @@ def _model_status(model_dir: Path) -> dict[str, Any]:
             "mat_files": [path.name for path in inc_mats],
             "mat_files_info": [_file_info(path) for path in inc_mats],
             "has_cfg": bool(list(inc_dir.glob("*.cfg"))) if inc_dir.is_dir() else False,
+        },
+        "validation": {
+            "validated": bool(validated_names) and len(validated_names) == len(inc_names) if inc_names else False,
+            "matched_mat_count": len(validated_names),
+            "mat_files": [str(path.relative_to(val_dir)) for path in val_mats] if val_dir.is_dir() else [],
+            "mat_files_info": [_file_info(path) for path in val_mats],
+            "has_cfg": bool(list(val_dir.glob("*.cfg"))) if val_dir.is_dir() else False,
         },
         "shakedown": {
             "has_results": bool(sd_mats),
