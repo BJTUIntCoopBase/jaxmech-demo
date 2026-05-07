@@ -1,137 +1,193 @@
 # jaxmech-demo
 
-**jaxmech-demo** 是 jaxmech 的轻量公开演示版，用于展示从实体单元弹性分析、ODB validation、CVXPY shakedown 到 Web visualization 的完整最小工作流。
+`jaxmech-demo` is the public demonstration edition of jaxmech. It provides a focused, runnable subset of the full workflow for solid finite element analysis, validation, shakedown analysis, task management, and MAT field visualization.
 
-> Demo 保留完整版 Web GUI 的布局、sidebar、dashboard card、任务管理和 visualization 体验；未开放的模块以前端加锁形式呈现，对应后端代码和 runner 不进入 demo 仓库。
+The demo keeps the same Web GUI layout as the full/private version. Unsupported workflows remain visible as locked entries, while their backend runners and implementation code are not included in this repository.
 
-## ✨ 新版本亮点
+## English
 
-| 图标 | 新增/改进 | 说明 |
-| --- | --- | --- |
-| 🧭 | 完整版菜单布局 | Demo 与 full version 保持同一套 GUI 风格，未开放入口显示锁定状态。 |
-| 🧱 | 实体弹性 `inc_analysis` | 支持 3D solid linear elastic 分析；正式计算一次只生成一个结果 MAT。 |
-| 🧪 | Solid elastic ODB validation | Validation 模块包含实体单元弹性对标流程，可从已有 JAX MAT 与 ABAQUS ODB/MAT 做比较。 |
-| 🛡️ | CVXPY shakedown | 支持实体单元 lower-bound shakedown 的 C formulation + CVXPY/Clarabel backend。 |
-| 🎨 | MAT 场变量可视化 | 保留 visualization 模块完整功能，支持 elastic、validation 和 shakedown MAT。 |
-| 📋 | 任务管理 | Web task runs、日志、artifact 和历史任务恢复保留完整体验。 |
-| 📁 | 模型浏览增强 | 支持浏览 `Examples/` 和 `StoredModels/`，并识别 timestamp run folder 中的结果。 |
-| ⚙️ | 环境设置增强 | Settings 中提供一键自动检测，以及一键安装所有支持库；已检测到部分库时会补齐缺失项。 |
+### Feature Scope
 
-## 🚀 快速开始
+| Area | Demo Support |
+| --- | --- |
+| Solid linear elastic `inc_analysis` | Available |
+| Solid elastic ODB `validation` | Available |
+| Solid C formulation shakedown | Available with CVXPY/Clarabel |
+| Web UI | Available, full-layout GUI with locked unsupported entries |
+| Task management | Available |
+| MAT field visualization | Available for elastic, validation, and shakedown results |
+| Model browser | Available for curated examples and local stored models |
+| Settings workflow | Available with environment detection and supported-library installation |
 
-### 环境要求
+### Main Capabilities
 
-- Windows + WSL
-- WSL Python 3.9+，用于 JAX 分析流程
-- Windows Python 3.9+，用于 Web UI、任务管理和 visualization
+- Run solid linear elastic analysis from ABAQUS INP models and export a single final MAT result for each analysis run.
+- Compare solid elastic JAX MAT results with matching ABAQUS ODB/MAT data through the validation workflow.
+- Run lower-bound shakedown analysis with the C formulation and CVXPY/Clarabel backend.
+- Manage Web tasks with persisted logs, task manifests, recovered history, and MAT artifacts.
+- Visualize MAT field variables for elastic, validation, and shakedown outputs in the browser.
+- Browse models and nested timestamped run folders under `Examples/` and `StoredModels/`.
+- Detect the local Web/WSL environment and install missing supported Windows Web libraries from the Settings page.
 
-### 安装 demo 环境
+### Locked Workflows
+
+The following workflows are intentionally locked in the public demo:
+
+- Shell analysis and shell validation
+- Elastic-plastic incremental analysis
+- Direct Methods / DCA / RSDM workflows
+- Nonlinear validation
+- Shell shakedown
+- Gurobi backend workflows
+- Topology optimization
+
+### Requirements
+
+- Windows with WSL
+- WSL Python 3.9+ for JAX analysis
+- Windows Python 3.9+ for the Web UI, task management, and visualization
+
+### Install
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\Config\setup_demo_env.ps1
 ```
 
-如果你已经有可用的 WSL JAX 环境，可以显式指定：
+If you already have a WSL JAX environment:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\Config\setup_demo_env.ps1 `
   -WslPython /home/yourname/miniconda3/envs/jax-fem-env/bin/python
 ```
 
-### 启动 Web UI
+### Launch the Web UI
 
 ```cmd
 Config\start_web.bat
 ```
 
-然后在浏览器打开：
+Open:
 
 ```text
 http://127.0.0.1:8080
 ```
 
-## 🧩 推荐 Web 工作流
+### Recommended Web Workflow
 
-1. 打开 **设置**，执行一键自动检测；如有缺失，使用一键安装所有支持库补齐 Windows Web 依赖。
-2. 进入 **模型浏览**，从 `Examples/` 或 `StoredModels/` 选择模型。
-3. 进入 **增量分析**，选择 solid INP，完成 parse 后运行 linear elastic analysis。
-4. 可选：进入 **ODB 验证**，选择已有 JAX MAT 与匹配的 ABAQUS ODB/MAT 进行 elastic validation。
-5. 进入 **安定分析**，选择弹性分析生成的 MAT，运行 C formulation + CVXPY shakedown。
-6. 在 **场变量可视化** 中查看 elastic、validation 或 shakedown 的 MAT 结果。
-7. 在 **任务管理** 中查看日志、运行状态和生成的 MAT artifact。
+1. Open **Settings**, run environment detection, and install missing supported libraries if needed.
+2. Open **Model Browser** and select a model from `Examples/` or `StoredModels/`.
+3. Open **Incremental Analysis**, select a solid INP file, parse it, and run the elastic analysis.
+4. Optionally open **ODB Validation** and compare the JAX MAT with matching ABAQUS ODB/MAT data.
+5. Open **Shakedown**, select the elastic MAT result, and run the CVXPY shakedown workflow.
+6. Open **MAT Visualization** to inspect elastic, validation, or shakedown field variables.
+7. Open **Task Management** to review logs, status, and generated MAT artifacts.
 
-## 🖥️ CLI 入口
+### CLI Entry Points
 
-Web UI 是推荐入口；如需命令行运行，可使用同一套 WSL wrapper。`--config` 可以指向 Web 生成的 run folder 内配置文件，或模块模板复制后得到的配置文件。
+The Web UI is the recommended entry point. For command-line use, run the same workflows through the WSL wrapper. The `--config` argument may point to a configuration file generated by the Web workflow or to a copied module template.
 
-### Solid elastic analysis
+Solid elastic analysis:
 
 ```powershell
 .\Config\run_in_wsl.ps1 -m jaxmech.tools.build_model_mat -- --config <path-to-inc-analysis-cfg>
 ```
 
-### Solid elastic ODB validation
+Solid elastic ODB validation:
 
 ```powershell
 .\Config\run_in_wsl.ps1 -m jaxmech.modules.validation.elastic.run -- --config <path-to-validation-cfg>
 ```
 
-### CVXPY shakedown
+CVXPY shakedown:
 
 ```powershell
 .\Config\run_in_wsl.ps1 -m jaxmech.modules.shakedown.run -- --config <path-to-shakedown-cfg>
 ```
 
-## 📦 Included Examples
+### Included Examples
 
-| Example | 内容 |
+| Example | Description |
 | --- | --- |
-| `PlateWithHole` | 3D solid plate with hole，包含两个 elastic load cases，可用于 inc_analysis、validation 和 shakedown。 |
-| `PlateWithHoleMultiEle` | 混合实体单元示例，包含 C3D8、C3D6 和 C3D4。 |
+| `PlateWithHole` | 3D solid plate with a hole, including elastic load cases for analysis, validation, and shakedown. |
+| `PlateWithHoleMultiEle` | Mixed solid-element example with C3D8, C3D6, and C3D4 elements. |
 
-## 🔒 Demo Scope
-
-### ✅ 可用功能
-
-| 模块 | Demo 状态 |
-| --- | --- |
-| Solid linear elastic `inc_analysis` | 可运行 |
-| Solid elastic ODB `validation` | 可运行 |
-| Solid C formulation + CVXPY shakedown | 可运行 |
-| Web UI | 可用，保持完整版布局 |
-| Task management | 可用，保留完整功能 |
-| MAT visualization | 可用，保留完整功能 |
-| Model browser | 可用，浏览有限示例与本地模型 |
-| Settings | 可用，支持一键检测和一键安装支持库 |
-
-### 🔐 仅保留锁定入口
-
-| 模块/能力 | Demo 状态 |
-| --- | --- |
-| Shell analysis / shell validation | 锁定入口 |
-| Elastic-plastic incremental analysis | 锁定入口 |
-| Direct Methods / DCA / RSDM | 锁定入口 |
-| Nonlinear / DCA validation | 锁定入口 |
-| Shell shakedown | 锁定入口 |
-| Gurobi backend | 锁定入口 |
-| Topology optimization | 锁定入口 |
-
-## 🗂️ 目录速览
+### Repository Layout
 
 ```text
-Config/        环境初始化、WSL wrapper 和 Web 启动脚本
-Examples/      随仓库提供的演示模型
-StoredModels/  本地模型工作区，默认不随仓库发布
-Cache/         Web task runs、日志和本地缓存
-jaxmech/       demo 版可运行源码
+Config/        Environment setup, WSL wrapper, and Web launcher
+Examples/      Curated demo models
+StoredModels/  Local model workspace, not intended for repository release
+Cache/         Web task logs and local cache
+jaxmech/       Runnable demo source code
 ```
 
-## 🤝 Full Version
+## 中文
 
-Demo 版用于公开演示和教学验证。若需要完整版本、更多模块或合作事宜，请联系：
+### 功能范围
+
+`jaxmech-demo` 是 jaxmech 的公开演示版，保留实体单元弹性分析、实体弹性 ODB validation、CVXPY backend 安定分析、任务管理和 MAT 场变量可视化这条最小可运行链路。
+
+Demo 版 Web GUI 与 full/private 版保持同一布局。未开放功能在前端显示为锁定入口，对应后端 runner 和实现代码不包含在 demo 仓库中。
+
+| 模块 | Demo 支持情况 |
+| --- | --- |
+| 实体单元线弹性 `inc_analysis` | 可运行 |
+| 实体单元弹性 ODB `validation` | 可运行 |
+| 实体 C formulation shakedown | 可通过 CVXPY/Clarabel 运行 |
+| Web UI | 可用，保持完整版布局并锁定未开放入口 |
+| 任务管理 | 可用 |
+| MAT 场变量可视化 | 支持 elastic、validation 和 shakedown 结果 |
+| 模型浏览 | 支持示例模型和本地模型 |
+| Settings | 支持环境检测和一键安装支持库 |
+
+### 主要能力
+
+- 从 ABAQUS INP 模型运行实体单元线弹性分析，每次正式分析导出一个最终 MAT 结果。
+- 基于已有 JAX MAT 与匹配的 ABAQUS ODB/MAT 数据进行实体弹性 validation。
+- 使用 C formulation 和 CVXPY/Clarabel backend 运行下限安定分析。
+- 在 Web 端管理任务、日志、运行历史和 MAT artifact。
+- 在浏览器中查看 elastic、validation 和 shakedown 的 MAT 场变量。
+- 浏览 `Examples/` 与 `StoredModels/` 中的模型和 timestamp run folder。
+- 在 Settings 中检测本地 Web/WSL 环境，并补齐缺失的 Windows Web 支持库。
+
+### 锁定范围
+
+以下功能仅保留 GUI 锁定入口，不提供完整 demo 后端：
+
+- Shell analysis 与 shell validation
+- 弹塑性增量分析
+- Direct Methods / DCA / RSDM
+- Nonlinear validation
+- Shell shakedown
+- Gurobi backend workflows
+- Topology optimization
+
+### 快速开始
+
+安装 demo 环境：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\Config\setup_demo_env.ps1
+```
+
+启动 Web UI：
+
+```cmd
+Config\start_web.bat
+```
+
+浏览器打开：
+
+```text
+http://127.0.0.1:8080
+```
+
+### 联系方式
+
+如需完整版本或合作事宜，请联系：
 
 **gengchen@bjtu.edu.cn**
 
-## 📄 License
+## License
 
 GPL-3.0. See [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt).
