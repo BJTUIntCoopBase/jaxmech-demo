@@ -125,7 +125,6 @@ def export_solid_elastic_result_mat(
         "source_file": str(model.metadata.get("source_file", "")),
         "family": "solid",
         "analysis_type": "linear_static",
-        "gauss_order": str(result.metadata.get("gauss_order", "")),
         "use_b_ext": str(result.metadata.get("use_b_ext", "")),
         "analysis_stage": "result",
         "has_analysis_result": "1",

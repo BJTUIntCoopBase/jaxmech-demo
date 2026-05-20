@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>jaxmech — 计算力学工作台</title>
-  <meta name="description" content="jaxmech modular computational mechanics frontend" />
+  <title>jaxmech-demo — 公开演示工作台</title>
+  <meta name="description" content="jaxmech public demo frontend" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/css/main.css?v=6" />
+  <link rel="stylesheet" href="/static/css/main.css?v=46" />
 </head>
 <body>
   <div class="app-layout">
@@ -18,7 +18,7 @@
       <div class="sidebar-header">
         <div class="sidebar-logo">
           <div class="logo-icon">JM</div>
-          <span class="logo-text">jaxmech</span>
+          <span class="logo-text">jaxmech-demo</span>
           <span class="logo-version">v0.1</span>
         </div>
         <div style="margin-top: 15px; padding: 10px; background: rgba(0,0,0,0.1); border-radius: 6px; cursor: pointer; transition: background 0.2s;" onclick="App.navigate('models')" onmouseover="this.style.background='rgba(0,0,0,0.2)'" onmouseout="this.style.background='rgba(0,0,0,0.1)'" title="点击更改模型">
@@ -91,7 +91,7 @@
         <div class="page-container">
           <div class="page-header">
             <h1 class="page-title">仪表板</h1>
-            <p class="page-subtitle">jaxmech 计算力学工作台 — 环境概览与快速入口</p>
+            <p class="page-subtitle">jaxmech 公开演示工作台 — 环境概览与快速入口</p>
           </div>
           <div id="dashboard-content"></div>
         </div>
@@ -113,7 +113,7 @@
         <div class="page-container">
           <div class="page-header">
             <h1 class="page-title">增量分析</h1>
-            <p class="page-subtitle">根据 INP 自动切换增量弹性 / 弹塑性，并允许覆盖默认材料参数</p>
+            <p class="page-subtitle">demo 版开放实体单元线弹性分析，并允许覆盖默认材料参数</p>
           </div>
           <div id="elastic-content"></div>
         </div>
@@ -124,7 +124,7 @@
         <div class="page-container">
           <div class="page-header">
             <h1 class="page-title">Direct Methods</h1>
-            <p class="page-subtitle">Steady-state 汇集 DCA / RSDM，Shakedown 提供 RSDM-S；最终 MAT 可直接进入 visualization</p>
+            <p class="page-subtitle">demo 版保留完整版入口布局；Direct Methods 后端未开放</p>
           </div>
           <div id="direct-methods-content"></div>
         </div>
@@ -135,7 +135,7 @@
         <div class="page-container">
           <div class="page-header">
             <h1 class="page-title">ODB 验证</h1>
-            <p class="page-subtitle">根据 MAT 自动切换 elastic / nonlinear / DCA 等验证；DCA 结果同样从 ODB 起步并支持时间采样对齐</p>
+            <p class="page-subtitle">demo 版开放实体单元弹性 MAT 与 Abaqus ODB 的字段对标</p>
           </div>
           <div id="validation-content"></div>
         </div>
@@ -146,7 +146,7 @@
         <div class="page-container">
           <div class="page-header">
             <h1 class="page-title">安定分析</h1>
-            <p class="page-subtitle">基于弹性 .mat 结果进行结构安定性 SOCP 优化分析</p>
+            <p class="page-subtitle">基于实体弹性 .mat 结果运行 C formulation + CVXPY 安定分析</p>
           </div>
           <div id="shakedown-content"></div>
         </div>
@@ -197,6 +197,7 @@
 
   <!-- Vendor libs -->
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
   <!-- MathJax 3 — LaTeX formula rendering -->
   <script>
     window.MathJax = {
@@ -212,7 +213,7 @@
   <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js" async></script>
   <!-- App scripts -->
   <script src="/static/js/websocket.js?v=6"></script>
-  <script src="/static/js/components.js?v=6"></script>
-  <script src="/static/js/app.js?v=6"></script>
+  <script src="/static/js/components.js?v=7"></script>
+  <script src="/static/js/app.js?v=51"></script>
 </body>
 </html>

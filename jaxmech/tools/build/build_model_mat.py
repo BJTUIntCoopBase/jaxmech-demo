@@ -31,7 +31,6 @@ def run_jax_elastic(config_target: str | Path) -> list[Path]:
         analysis_config = AnalysisConfig(
             analysis_type="linear_static",
             use_b_ext=int(config.get("use_b_ext", 0)),
-            gauss_order=int(config.get("gauss_order", 2)),
             n_increments=int(config.get("n_increments", 1)),
             E_override=config.get("E_override"),
             nu_override=config.get("nu_override"),
@@ -44,7 +43,6 @@ def run_jax_elastic(config_target: str | Path) -> list[Path]:
             "material_model": "linear_elastic",
             "requested_material_model": "linear_elastic",
             "configured_use_b_ext": int(config.get("use_b_ext", 0)),
-            "configured_gauss_order": int(config.get("gauss_order", 2)),
             "configured_n_increments": int(config.get("n_increments", 1)),
         }
 

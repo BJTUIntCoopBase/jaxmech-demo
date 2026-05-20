@@ -154,7 +154,6 @@ def solve_linear_step(
     *,
     material: LinearMaterialProperties,
     solver_options: Optional[dict] = None,
-    gauss_order: int = 2,
     use_b_ext: int = 1,
     load_scale: float = 1.0,
     increment_index: int = 1,
@@ -171,7 +170,7 @@ def solve_linear_step(
     n_nodes = model.mesh.n_nodes
     total_dofs = n_nodes * ndof_per_node
 
-    props = material.to_dict(use_b_ext=use_b_ext, gauss_order=gauss_order)
+    props = material.to_dict(use_b_ext=use_b_ext)
 
     print(
         f"\n[Solid Linear] "
@@ -264,7 +263,6 @@ def solve_linear_step(
             "analysis_type": "linear_static",
             "family": family,
             "source_file": model.metadata.get("source_file"),
-            "gauss_order": gauss_order,
             "use_b_ext": use_b_ext,
             "gauss_layout": gauss_layout,
             "n_elements": model.mesh.n_elements_total,

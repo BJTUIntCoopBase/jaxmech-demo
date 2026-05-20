@@ -361,7 +361,7 @@ DEFAULT_ELE_TYPE_FROM_CELL_TYPE = {
     "wedge": "C3D6",
     "tetra": "C3D4",
 }
-_CPS4_LEGACY_GAUSS_ORDER = np.asarray([0, 2, 3, 1], dtype=np.int32)
+_CPS4_LEGACY_QP_SEQUENCE = np.asarray([0, 2, 3, 1], dtype=np.int32)
 
 
 def _reorder_block_gauss_to_legacy(ele_type: str, field: np.ndarray) -> np.ndarray:
@@ -376,7 +376,7 @@ def _reorder_block_gauss_to_legacy(ele_type: str, field: np.ndarray) -> np.ndarr
     if arr.ndim < 3:
         return arr
     if ele in {"CPS4", "CPE4"} and arr.shape[1] == 4:
-        return arr[:, _CPS4_LEGACY_GAUSS_ORDER, ...]
+        return arr[:, _CPS4_LEGACY_QP_SEQUENCE, ...]
     return arr
 
 

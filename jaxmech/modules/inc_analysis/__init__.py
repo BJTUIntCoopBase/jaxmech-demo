@@ -19,7 +19,6 @@ class AnalysisConfig:
 
     analysis_type: str = "linear_static"
     n_increments: int = 1
-    gauss_order: int = 2
     use_b_ext: int = 1
     solver_options: Optional[dict[str, Any]] = None
     E_override: Optional[float] = None
@@ -60,7 +59,6 @@ def _run_incremental_loop(
             model,
             material=material,
             solver_options=config.solver_options,
-            gauss_order=config.gauss_order,
             use_b_ext=config.use_b_ext,
             load_scale=load_scale,
             increment_index=increment_index,

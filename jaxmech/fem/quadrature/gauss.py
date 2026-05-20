@@ -35,7 +35,7 @@ def get_gauss_1d(order: int) -> Tuple[jnp.ndarray, jnp.ndarray]:
         points = jnp.array([-val, 0.0, val], dtype=jnp.float64)
         weights = jnp.array([5.0 / 9.0, 8.0 / 9.0, 5.0 / 9.0], dtype=jnp.float64)
     else:
-        raise ValueError(f"1D Gauss order {order} not implemented.")
+        raise ValueError(f"1D quadrature order {order} not implemented.")
     return points, weights
 
 

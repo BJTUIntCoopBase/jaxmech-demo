@@ -1,4 +1,4 @@
-﻿/**
+/**
  * jaxmech Web Frontend — Reusable UI Components
  */
 const UI = {
@@ -72,11 +72,11 @@ const UI = {
     if (text.includes('steady_state_dca') || text.includes('direct_methods.dca') || (module.includes('run_steady_state') && text.includes('dca'))) {
       return 'DCA';
     }
+    if (text.includes('rsdm_shakedown') || text.includes('rsdms') || text.includes('method = rsdm_s')) {
+      return 'RSDM-S';
+    }
     if (text.includes('steady_state_rsdm') || text.includes('direct_methods.rsdm') || (module.includes('run_steady_state') && text.includes('rsdm'))) {
       return 'RSDM';
-    }
-    if (text.includes('rsdm_shakedown') || text.includes('rsdms')) {
-      return 'RSDM-S';
     }
     if (module.includes('shakedown')) {
       return 'Shakedown';
@@ -149,13 +149,18 @@ const UI = {
 
   /** Doc list item */
   docItem(doc) {
+    const title = doc.title || doc.display_name || doc.name || '';
+    const relPath = doc.rel_path || '';
+    const depth = Math.max(0, Math.min(Number(doc.depth || 0), 6));
+    const paddingLeft = 16 + depth * 14;
+    const safeRelPath = this.escapeHtml(relPath).replace(/'/g, '&#39;');
     const badge = `<span style="font-size:11px;padding:2px 8px;border-radius:99px;
       background:rgba(255,255,255,0.07);color:var(--text-secondary);margin-left:8px;
       vertical-align:middle">${doc.category_icon || '📄'} ${doc.category_label || ''}</span>`;
     return `
-      <div class="doc-item" onclick="App.viewDoc('${doc.rel_path}')">
+      <div class="doc-item" style="padding-left:${paddingLeft}px" onclick="App.viewDoc('${safeRelPath}')">
         <span style="font-size:18px">📄</span>
-        <span style="font-weight:600">${doc.name}</span>${badge}
+        <span style="font-weight:600">${this.escapeHtml(title)}</span>${badge}
       </div>`;
   },
 

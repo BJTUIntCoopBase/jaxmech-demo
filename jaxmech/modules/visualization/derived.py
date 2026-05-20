@@ -69,6 +69,215 @@ def hydrostatic_6(s: np.ndarray) -> np.ndarray:
     return (s[..., 0] + s[..., 1] + s[..., 2]) / 3.0
 
 
+def _is_shell_generalized_field(fi: FieldInfo, *, kind: str) -> bool:
+    text = f"{fi.key} {fi.label} {fi.description}".lower()
+    return (
+        fi.n_components >= 6
+        and "shell generalized" in text
+        and kind in text
+    )
+
+
+def _register_scalar_split(
+    vd: VizData,
+    *,
+    src_key: str,
+    derived_key: str,
+    component_slice: slice,
+    label: str,
+    symbol: str,
+    formula: str,
+    description: str,
+) -> None:
+    if src_key not in vd.fields or derived_key in vd.fields:
+        return
+    fi = vd.field_info.get(src_key)
+    if fi is None or fi.n_components < component_slice.stop:
+        return
+    raw = np.asarray(vd.fields[src_key], dtype=np.float64)
+    if raw.ndim < 1 or raw.shape[-1] < component_slice.stop:
+        return
+    derived = np.linalg.norm(raw[..., component_slice], axis=-1)
+    if int(fi.n_frames) <= 1 and derived.ndim >= 2 and derived.shape[0] == 1:
+        derived = derived[0]
+    vd.fields[derived_key] = derived
+    vd.field_info[derived_key] = FieldInfo(
+        key=derived_key,
+        label=label,
+        n_components=1,
+        location=fi.location,
+        n_frames=fi.n_frames,
+        symbol=symbol,
+        formula=formula,
+        description=description,
+    )
+
+
+def _register_shell_generalized_split_magnitudes(vd: VizData) -> None:
+    """Expose separate membrane/curvature magnitudes for STRI3 shell fields."""
+    stress_specs = {
+        "gauss_stress": ("gauss_shell_sgen_sf_magnitude", "gauss_shell_sgen_sm_magnitude", ""),
+        "shell_generalized_stress": ("shell_sgen_sf_magnitude", "shell_sgen_sm_magnitude", ""),
+        "frame_gauss_stress": ("frame_shell_sgen_sf_magnitude", "frame_shell_sgen_sm_magnitude", " history"),
+        "validation_jax_S": ("validation_jax_sgen_sf_magnitude", "validation_jax_sgen_sm_magnitude", " history"),
+        "validation_abaqus_S": ("validation_abaqus_sgen_sf_magnitude", "validation_abaqus_sgen_sm_magnitude", " history"),
+    }
+    for src_key, (sf_key, sm_key, suffix) in stress_specs.items():
+        fi = vd.field_info.get(src_key)
+        if fi is None or not _is_shell_generalized_field(fi, kind="stress"):
+            continue
+        _register_scalar_split(
+            vd,
+            src_key=src_key,
+            derived_key=sf_key,
+            component_slice=slice(0, 3),
+            label=f"SGEN SF magnitude{suffix}",
+            symbol=r"\|\mathbf{SF}\|_2",
+            formula=r"\|\mathbf{SF}\|_2=\sqrt{SF_{11}^2+SF_{22}^2+SF_{12}^2}",
+            description="Magnitude of the shell membrane force-resultant components SF11/SF22/SF12.",
+        )
+        _register_scalar_split(
+            vd,
+            src_key=src_key,
+            derived_key=sm_key,
+            component_slice=slice(3, 6),
+            label=f"SGEN SM magnitude{suffix}",
+            symbol=r"\|\mathbf{SM}\|_2",
+            formula=r"\|\mathbf{SM}\|_2=\sqrt{SM_{11}^2+SM_{22}^2+SM_{12}^2}",
+            description="Magnitude of the shell bending moment-resultant components SM11/SM22/SM12.",
+        )
+
+    strain_specs = {
+        "gauss_strain": ("gauss_shell_egen_ge_magnitude", "gauss_shell_egen_gk_magnitude", ""),
+        "shell_generalized_strain": ("shell_egen_ge_magnitude", "shell_egen_gk_magnitude", ""),
+        "frame_gauss_strain": ("frame_shell_egen_ge_magnitude", "frame_shell_egen_gk_magnitude", " history"),
+        "validation_jax_E": ("validation_jax_egen_ge_magnitude", "validation_jax_egen_gk_magnitude", " history"),
+        "validation_abaqus_E": ("validation_abaqus_egen_ge_magnitude", "validation_abaqus_egen_gk_magnitude", " history"),
+    }
+    for src_key, (ge_key, gk_key, suffix) in strain_specs.items():
+        fi = vd.field_info.get(src_key)
+        if fi is None or not _is_shell_generalized_field(fi, kind="strain"):
+            continue
+        _register_scalar_split(
+            vd,
+            src_key=src_key,
+            derived_key=ge_key,
+            component_slice=slice(0, 3),
+            label=f"EGEN GE magnitude{suffix}",
+            symbol=r"\|\mathbf{GE}\|_2",
+            formula=r"\|\mathbf{GE}\|_2=\sqrt{GE_{11}^2+GE_{22}^2+GE_{12}^2}",
+            description="Magnitude of the shell membrane strain components GE11/GE22/GE12.",
+        )
+        _register_scalar_split(
+            vd,
+            src_key=src_key,
+            derived_key=gk_key,
+            component_slice=slice(3, 6),
+            label=f"EGEN GK magnitude{suffix}",
+            symbol=r"\|\mathbf{GK}\|_2",
+            formula=r"\|\mathbf{GK}\|_2=\sqrt{GK_{11}^2+GK_{22}^2+GK_{12}^2}",
+            description="Magnitude of the shell curvature components GK11/GK22/GK12.",
+        )
+
+
+def _is_shell_node_vector_field(fi: FieldInfo, *, kind: str) -> bool:
+    text = f"{fi.key} {fi.label} {fi.description}".lower()
+    if fi.n_components < 6 or fi.location != "node":
+        return False
+    if kind == "u":
+        return (
+            "shell displacement" in text
+            or "displacement/rotation" in text
+            or fi.key in {"shell_u_nodal", "frame_u", "validation_jax_U", "validation_abaqus_U"}
+        )
+    if kind == "nforc":
+        return (
+            "shell generalized nodal force" in text
+            or "force/moment" in text
+            or fi.key in {"shell_gen_internal_force", "frame_nforc", "frame_shell_f_drill", "validation_jax_NFORC", "validation_abaqus_NFORC"}
+        )
+    return False
+
+
+def _register_shell_node_vector_split_magnitudes(vd: VizData) -> None:
+    """Expose separate translational/rotational and force/moment magnitudes."""
+    u_specs = {
+        "shell_u_nodal": ("shell_u_trans_magnitude", "shell_u_rot_magnitude", ""),
+        "frame_u": ("frame_shell_u_trans_magnitude", "frame_shell_u_rot_magnitude", " history"),
+        "validation_jax_U": ("validation_jax_u_trans_magnitude", "validation_jax_u_rot_magnitude", " history"),
+        "validation_abaqus_U": ("validation_abaqus_u_trans_magnitude", "validation_abaqus_u_rot_magnitude", " history"),
+    }
+    for src_key, (u_key, ur_key, suffix) in u_specs.items():
+        fi = vd.field_info.get(src_key)
+        if fi is None or not _is_shell_node_vector_field(fi, kind="u"):
+            continue
+        _register_scalar_split(
+            vd,
+            src_key=src_key,
+            derived_key=u_key,
+            component_slice=slice(0, 3),
+            label=f"U translational magnitude{suffix}",
+            symbol=r"\|\mathbf{U}\|_2",
+            formula=r"\|\mathbf{U}\|_2=\sqrt{U_1^2+U_2^2+U_3^2}",
+            description="Magnitude of the shell translational displacement components U1/U2/U3.",
+        )
+        _register_scalar_split(
+            vd,
+            src_key=src_key,
+            derived_key=ur_key,
+            component_slice=slice(3, 6),
+            label=f"UR rotational magnitude{suffix}",
+            symbol=r"\|\mathbf{UR}\|_2",
+            formula=r"\|\mathbf{UR}\|_2=\sqrt{UR_1^2+UR_2^2+UR_3^2}",
+            description="Magnitude of the shell rotational degrees of freedom UR1/UR2/UR3.",
+        )
+
+    force_specs = {
+        "shell_gen_internal_force": ("shell_nforc_force_magnitude", "shell_nforc_moment_magnitude", "NFORC", ""),
+        "frame_nforc": ("frame_shell_nforc_force_magnitude", "frame_shell_nforc_moment_magnitude", "NFORC", " history"),
+        "frame_shell_f_drill": ("frame_shell_f_drill_force_magnitude", "frame_shell_f_drill_moment_magnitude", "FDRILL", " history"),
+        "validation_jax_NFORC": ("validation_jax_nforc_force_magnitude", "validation_jax_nforc_moment_magnitude", "NFORC", " history"),
+        "validation_abaqus_NFORC": ("validation_abaqus_nforc_force_magnitude", "validation_abaqus_nforc_moment_magnitude", "NFORC", " history"),
+        "rsdms_NFORC": ("rsdms_nforc_force_magnitude", "rsdms_nforc_moment_magnitude", "NFORC", " vertex history"),
+        "rsdms_CEQ": ("rsdms_ceq_force_magnitude", "rsdms_ceq_moment_magnitude", "CEQ", " load-point history"),
+        "rsdms_FERROR": ("rsdms_ferror_force_magnitude", "rsdms_ferror_moment_magnitude", "FERROR", " vertex history"),
+        "shakedown_equality_violation": ("shakedown_ceq_force_magnitude", "shakedown_ceq_moment_magnitude", "CEQ", " history"),
+    }
+    for src_key, (force_key, moment_key, base_label, suffix) in force_specs.items():
+        fi = vd.field_info.get(src_key)
+        if fi is None:
+            continue
+        is_nforc = _is_shell_node_vector_field(fi, kind="nforc")
+        is_shell_force_moment = fi.n_components >= 6 and fi.location == "node" and src_key in {
+            "rsdms_NFORC",
+            "rsdms_CEQ",
+            "rsdms_FERROR",
+            "shakedown_equality_violation",
+        }
+        if not (is_nforc or is_shell_force_moment):
+            continue
+        _register_scalar_split(
+            vd,
+            src_key=src_key,
+            derived_key=force_key,
+            component_slice=slice(0, 3),
+            label=f"{base_label} force magnitude{suffix}",
+            symbol=r"\|\mathbf{F}\|_2",
+            formula=r"\|\mathbf{F}\|_2=\sqrt{F_1^2+F_2^2+F_3^2}",
+            description=f"Magnitude of the shell {base_label} force components F1/F2/F3.",
+        )
+        _register_scalar_split(
+            vd,
+            src_key=src_key,
+            derived_key=moment_key,
+            component_slice=slice(3, 6),
+            label=f"{base_label} moment magnitude{suffix}",
+            symbol=r"\|\mathbf{M}\|_2",
+            formula=r"\|\mathbf{M}\|_2=\sqrt{M_1^2+M_2^2+M_3^2}",
+            description=f"Magnitude of the shell {base_label} moment components M1/M2/M3.",
+        )
+
+
 # ---------------------------------------------------------------------------
 # Registration: add derived fields to VizData
 # ---------------------------------------------------------------------------
@@ -169,3 +378,6 @@ def register_derived_fields(vd: VizData) -> None:
             key=derived_key, label="Disp. Magnitude (cycle)",
             n_components=1, location="node", n_frames=n_frames,
         )
+
+    _register_shell_generalized_split_magnitudes(vd)
+    _register_shell_node_vector_split_magnitudes(vd)

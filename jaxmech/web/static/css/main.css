@@ -552,6 +552,17 @@ a:hover { text-decoration: underline; }
   margin: 12px 0;
 }
 .doc-content pre code { background: none; padding: 0; }
+.doc-content pre.mermaid {
+  background: transparent;
+  padding: 8px 0;
+  overflow-x: auto;
+}
+.doc-content .mermaid svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
 .doc-content table {
   width: 100%;
   border-collapse: collapse;
@@ -563,7 +574,37 @@ a:hover { text-decoration: underline; }
   text-align: left;
 }
 .doc-content th { background: var(--bg-input); font-weight: 600; }
+.doc-breadcrumb {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  background: rgba(30, 41, 59, 0.96);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  backdrop-filter: blur(10px);
+}
+.doc-crumb {
+  border: 0;
+  background: transparent;
+  color: var(--accent-blue);
+  font: inherit;
+  font-weight: 600;
+  padding: 2px 0;
+  cursor: pointer;
+}
+.doc-crumb:hover { color: var(--text-primary); text-decoration: underline; }
+.doc-crumb-current { color: var(--text-secondary); font-weight: 600; }
+.doc-crumb-sep { color: var(--text-muted); }
 .doc-list { display: flex; flex-direction: column; gap: 6px; }
+.doc-viewer {
+  scroll-margin-top: 12px;
+}
 .doc-item {
   display: flex;
   align-items: center;
@@ -1050,27 +1091,66 @@ a:hover { text-decoration: underline; }
   display: flex;
   align-items: center;
   align-content: flex-start;
-  column-gap: 5px;
+  /* Inter-element gap is handled per-group via ``.viz-group`` (tight) and
+     per-separator via ``.viz-sep`` (wide). Toolbar's own column-gap is
+     kept small because separators carry the visual breathing room. */
+  column-gap: 2px;
   row-gap: 4px;
   padding: 5px 8px;
   background: var(--bg-card);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
   flex-wrap: wrap;
-  margin-bottom: 6px;
+  margin-bottom: 5px;
 }
 
 .viz-toolbar .viz-group {
   display: flex;
   align-items: center;
-  gap: 4px;
+  /* Buttons inside a functional block should sit close together so the
+     user reads them as one group; visual breathing room is delegated to
+     ``.viz-sep`` between groups. */
+  gap: 2px;
   flex-wrap: nowrap;
   min-width: 0;
 }
 
 .viz-toolbar .viz-source-group {
-  flex: 0 1 auto;
-  min-width: 260px;
+  flex: 0 0 360px;
+  min-width: 360px;
+}
+
+#viz-toolbar-a .viz-field-group,
+#viz-toolbar-b .viz-field-group {
+  flex: 0 0 270px;
+}
+
+#viz-toolbar-a .viz-frame-group,
+#viz-toolbar-b .viz-frame-group {
+  flex: 0 0 335px;
+}
+
+#viz-toolbar-a .viz-view-group,
+#viz-toolbar-b .viz-view-group {
+  flex: 0 0 250px;
+}
+
+#viz-toolbar-a .viz-display-actions,
+#viz-toolbar-b .viz-display-actions {
+  flex: 0 0 142px;
+  order: 25;
+}
+
+#viz-toolbar-a .viz-legend-group,
+#viz-toolbar-b .viz-legend-group {
+  flex: 0 0 360px;
+  order: 21;
+}
+
+#viz-toolbar-a .viz-clip-group,
+#viz-toolbar-b .viz-clip-group {
+  flex: 0 0 330px;
+  order: 23;
 }
 
 .viz-toolbar .viz-action-group {
@@ -1078,11 +1158,70 @@ a:hover { text-decoration: underline; }
   flex-wrap: nowrap;
 }
 
+.viz-common-toolbar {
+  background: var(--bg-card);
+  border-color: var(--border-color);
+}
+
+.viz-common-toolbar .viz-compare-toolbar {
+  flex: 0 0 auto;
+}
+
+.viz-common-divider {
+  width: 2px;
+  min-height: 26px;
+  margin: 0 8px;
+  background: rgba(148, 163, 184, 0.58);
+}
+
+.viz-toolbar .viz-clip-group input[type="range"].viz-clip-slider {
+  width: 90px;
+  min-width: 60px;
+}
+.viz-toolbar .viz-clip-display {
+  /* Tight, right-aligned readout so "翻转" sits immediately next to the
+     "Z 50%" text instead of being pushed away by the empty space inside
+     a left-aligned 62-px container. ``Z 100%`` is the widest realistic
+     content at 12 px tabular-nums (~52 px); pinning min-width slightly
+     above that keeps the container at a constant width whether the
+     slider shows "Z 0%" or "Z 100%", so the 翻转 button never jitters
+     as the user drags. */
+  min-width: 54px;
+  text-align: right;
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  padding: 0 2px 0 4px;
+}
+.viz-toolbar .viz-clip-axis.active {
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+  background: rgba(59, 130, 246, 0.12);
+}
+.viz-toolbar .viz-clip-flip.active {
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+  background: rgba(59, 130, 246, 0.12);
+}
+/* "剖切" is now a button — when active, mirror the accent colour so the
+   user instantly sees the cut is on; when inactive it looks like every
+   other secondary button. */
+.viz-toolbar .viz-clip-toggle.active {
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+  background: rgba(59, 130, 246, 0.16);
+}
+.viz-toolbar .viz-clip-axis:disabled,
+.viz-toolbar .viz-clip-flip:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .viz-toolbar .viz-group-label {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   text-transform: none;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.05em;
   color: var(--text-muted);
   white-space: nowrap;
 }
@@ -1092,11 +1231,13 @@ a:hover { text-decoration: underline; }
   background: var(--bg-input);
   border: 1px solid var(--border-color);
   border-radius: 6px;
-  padding: 4px 7px;
+  padding: 3px 7px;
   font-size: 12px;
   color: var(--text-primary);
   font-family: inherit;
   transition: border-color var(--transition);
+  height: 26px;
+  line-height: 20px;
 }
 
 .viz-toolbar select:focus,
@@ -1107,31 +1248,134 @@ a:hover { text-decoration: underline; }
 }
 
 .viz-toolbar input[type="number"] {
-  width: 68px;
+  width: 84px;
+}
+
+/* Compact axis / preset / clip-axis buttons (single character labels). */
+.viz-toolbar .viz-view-btn,
+.viz-toolbar .viz-clip-axis {
+  padding-left: 6px;
+  padding-right: 6px;
+  min-width: 24px;
+}
+
+/* Cap the widths of selects whose option labels can otherwise stretch the
+   toolbar (validation field keys are long, e.g. "SGEN (validation_jax_S)").
+   Generous enough that the model / MAT names are recognisable, but bounded
+   so a 13-frame validation key doesn't push the row off-screen. */
+.viz-toolbar .viz-model-select { max-width: 140px; min-width: 100px; }
+.viz-toolbar .viz-mat-select { max-width: 200px; min-width: 140px; }
+.viz-toolbar .viz-field-family { max-width: 90px; }
+.viz-toolbar .viz-field-select { max-width: 150px; }
+.viz-toolbar .viz-legend-font { max-width: 68px; min-width: 58px; padding-right: 4px; }
+.viz-toolbar .viz-source-current-text {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.viz-toolbar .viz-field-map {
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--text-muted);
 }
 
 .viz-toolbar input[type="range"] {
-  width: 122px;
+  width: 110px;
   accent-color: var(--accent-blue);
   cursor: pointer;
 }
 
+.viz-toolbar .viz-frame-group input[type="range"] {
+  width: 110px;
+}
+
+.viz-toolbar .viz-frame-display {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  /* Override the legacy ``.viz-frame-display`` clamp() rule (which was
+     written for the old vertical timeline layout) — in the compact
+     toolbar we only need fit-content. */
+  width: auto;
+  min-width: 0;
+  max-width: none;
+  text-align: left;
+  padding: 0 4px;
+}
+
+.viz-toolbar .viz-inline-check {
+  font-size: 12px;
+  gap: 4px;
+}
+
+/* All inter-group separators in the toolbar use the same "obvious vertical
+   bar" — 2px thick, mid-opacity white, with comfortable horizontal margin
+   so groups never look like they bleed into each other. Buttons within a
+   group stay tightly packed (see ``.viz-group { gap: 2px }``). */
 .viz-toolbar .viz-sep {
-  width: 1px;
-  height: 20px;
-  background: rgba(255, 255, 255, 0.08);
-  margin: 0 2px;
+  width: 2px;
+  height: 22px;
+  background: rgba(255, 255, 255, 0.18);
+  margin: 0 8px;
+  flex: 0 0 auto;
+}
+
+/* Slightly stronger separator before semantically-distinct groups (e.g.
+   剖切 is a "spatial operation", not a colour-bar setting). Extra
+   horizontal margin so the boundary is unmistakable. */
+.viz-toolbar .viz-sep.viz-sep-strong {
+  width: 2px;
+  background: rgba(255, 255, 255, 0.28);
+  margin: 0 12px;
+}
+
+#viz-toolbar-a .viz-row-break,
+#viz-toolbar-b .viz-row-break {
+  order: 20;
+}
+
+#viz-toolbar-a .viz-legend-group + .viz-sep.viz-sep-strong,
+#viz-toolbar-b .viz-legend-group + .viz-sep.viz-sep-strong {
+  order: 22;
+  width: 2px;
+  background: rgba(255, 255, 255, 0.18);
+  margin: 0 8px;
+}
+
+#viz-toolbar-a .viz-view-group + .viz-sep:not(.viz-row-break),
+#viz-toolbar-b .viz-view-group + .viz-sep:not(.viz-row-break) {
+  order: 24;
+  width: 2px;
+  background: rgba(255, 255, 255, 0.28);
+  margin: 0 12px;
+}
+
+.viz-toolbar .viz-clip-group + .viz-sep {
+  margin-left: 4px;
+  margin-right: 4px;
 }
 
 .viz-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 3px;
-  padding: 4px 8px;
+  gap: 4px;
+  padding: 3px 9px;
   border-radius: 6px;
   font-size: 12px;
-  font-weight: 600;
+  /* Heavier weight unifies every clickable control (剖切, 网格, 信息,
+     截图, X/Y/Z, 视图, 图例 apply/auto, frame nav, …) so the user can
+     visually parse "this is something to click". */
+  font-weight: 800;
+  letter-spacing: 0.02em;
   border: 1px solid var(--border-color);
   background: var(--bg-input);
   color: var(--text-secondary);
@@ -1139,6 +1383,40 @@ a:hover { text-decoration: underline; }
   transition: all var(--transition);
   font-family: inherit;
   white-space: nowrap;
+  height: 26px;
+  line-height: 20px;
+}
+
+.viz-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--accent-blue);
+}
+
+/* ── Sync-display lock: B view / clip are mirrored from A ── */
+.viz-toolbar.viz-sync-locked .viz-view-btn,
+.viz-toolbar.viz-sync-locked .viz-clip-group .viz-btn,
+.viz-toolbar.viz-sync-locked .viz-clip-group input {
+  cursor: not-allowed !important;
+}
+.viz-canvas-panel.viz-sync-locked {
+  position: relative;
+}
+.viz-canvas-panel.viz-sync-locked::after {
+  content: '同步 view / clip';
+  position: absolute;
+  z-index: 6;
+  top: 8px;
+  right: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(234, 88, 12, 0.85);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  pointer-events: none;
+  z-index: 5;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 .viz-btn:hover {
   background: var(--bg-card-hover);
@@ -1162,31 +1440,32 @@ a:hover { text-decoration: underline; }
 }
 .viz-btn.primary:hover { filter: brightness(1.15); }
 .viz-btn.viz-compare-btn {
-  background: rgba(234, 88, 12, 0.15);
-  border: 1.5px solid rgba(234, 88, 12, 0.6);
-  color: rgb(251, 146, 60);
-  font-weight: 600;
-  letter-spacing: 0.03em;
+  background: rgba(217, 119, 6, 0.16);
+  border-color: rgba(217, 119, 6, 0.62);
+  color: #fbbf24;
+  font-weight: 800;
+  letter-spacing: 0.02em;
 }
 .viz-btn.viz-compare-btn:hover {
-  background: rgba(234, 88, 12, 0.3);
-  border-color: rgb(251, 146, 60);
+  background: rgba(217, 119, 6, 0.28);
+  border-color: #f59e0b;
 }
 .viz-btn.viz-compare-btn.active {
-  background: rgb(234, 88, 12);
-  border-color: rgb(234, 88, 12);
+  background: #d97706;
+  border-color: #d97706;
   color: #fff;
 }
 .viz-btn.viz-compare-btn.locked:disabled {
   opacity: 1;
-  background: rgb(234, 88, 12);
-  border-color: rgb(251, 146, 60);
+  background: #d97706;
+  border-color: #d97706;
   color: #fff;
   cursor: not-allowed;
 }
 
 .viz-canvas-wrap {
   flex: 1;
+  position: relative;
   display: flex;
   gap: 8px;
   min-height: 0;
@@ -1229,33 +1508,64 @@ a:hover { text-decoration: underline; }
 }
 
 .viz-math-overlay {
+  /* Default anchor: top-right of the canvas. The user can grab and drag
+     it elsewhere, or grip any edge / corner to scale it. Scaling is
+     aspect-locked: only the CSS variable ``--s`` changes, and every
+     internal size (padding, gaps, font-sizes, row column widths) is
+     defined as ``calc(... * var(--s))`` so the card is a true zoom of
+     itself — the user-perceived effect is "font (and everything else)
+     grows / shrinks", with the box auto-following the content. See
+     ``_vizAttachMathCardDrag`` in app.js. */
+  --s: 1;
   position: absolute;
   top: 14px;
   right: 14px;
   z-index: 4;
-  max-width: min(380px, calc(100% - 72px));
-  padding: 10px 12px;
+  /* No max-width / min-width — the box size is fully driven by --s and
+     the natural content size, so the box always exactly wraps the
+     scaled content. */
+  padding: calc(10px * var(--s)) calc(14px * var(--s));
   border: 1px solid rgba(15, 23, 42, 0.16);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.9);
+  border-radius: calc(8px * var(--s));
+  background: rgba(255, 255, 255, 0.92);
   color: #111827;
-  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.16);
-  pointer-events: none;
+  box-shadow: 0 12px 26px rgba(15, 23, 42, 0.16);
+  pointer-events: auto;
+  cursor: grab;
+  user-select: none;
+  /* overflow:hidden, NOT auto — auto used to render a horizontal
+     scrollbar track at the bottom whenever the rendered formula was
+     wider than the card, producing the dark band reported by the user.
+     With aspect-locked scaling everything wraps proportionally, so
+     hidden is safe. */
+  overflow: hidden;
+  transition: box-shadow 0.15s ease;
+  box-sizing: border-box;
+}
+
+.viz-math-overlay:hover {
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.22);
+}
+
+.viz-math-overlay.viz-math-dragging {
+  cursor: grabbing;
+  transition: none;
+  box-shadow: 0 18px 36px rgba(15, 23, 42, 0.28);
 }
 
 .viz-math-overlay-title {
-  font-size: 13px;
+  font-size: calc(13px * var(--s));
   font-weight: 800;
   line-height: 1.25;
 }
 
 .viz-math-overlay-row {
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr);
-  gap: 8px;
+  grid-template-columns: calc(44px * var(--s)) minmax(0, 1fr);
+  gap: calc(8px * var(--s));
   align-items: start;
-  margin-top: 7px;
-  font-size: 12px;
+  margin-top: calc(7px * var(--s));
+  font-size: calc(12px * var(--s));
   line-height: 1.35;
 }
 
@@ -1272,11 +1582,743 @@ a:hover { text-decoration: underline; }
 
 .viz-math-overlay-desc,
 .viz-math-overlay-frame {
-  margin-top: 7px;
-  font-size: 11px;
+  margin-top: calc(7px * var(--s));
+  font-size: calc(11px * var(--s));
   line-height: 1.35;
   color: #334155;
   overflow-wrap: anywhere;
+}
+
+/* ──────────────────────────────────────────────────────────────────── */
+/*   Probe (Abaqus-style picking) — toolbar group, hover, pinned cards  */
+/* ──────────────────────────────────────────────────────────────────── */
+
+.viz-probe-group {
+  /* Same gap/spacing as other toolbar groups; sub-elements show or hide
+     dynamically as the user toggles probe mode on. */
+  gap: 0;
+  flex-wrap: nowrap;
+}
+
+.viz-probe-group .viz-btn {
+  padding-left: 3px;
+  padding-right: 3px;
+  letter-spacing: 0;
+}
+
+.viz-probe-group .viz-inline-check {
+  gap: 3px;
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
+.viz-probe-extrema-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-wrap: nowrap;
+}
+
+.viz-probe-visible-wrap {
+  white-space: nowrap;
+}
+
+.viz-probe-extrema-count {
+  min-width: 46px;
+  max-width: 50px;
+  padding-left: 6px !important;
+  padding-right: 4px !important;
+}
+
+#viz-probe-toggle + .viz-probe-mode {
+  margin-left: 8px;
+}
+
+.viz-element-select-group {
+  gap: 4px;
+  flex-wrap: nowrap;
+}
+
+.viz-element-select-toggle {
+  background: rgba(217, 119, 6, 0.16);
+  border-color: rgba(217, 119, 6, 0.62);
+  color: #fbbf24;
+  font-weight: 800;
+}
+
+.viz-element-select-toggle.active {
+  background: #d97706;
+  border-color: #d97706;
+  color: #fff;
+}
+
+.viz-element-select-panel {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  z-index: 16;
+  width: min(520px, calc(100% - 32px));
+  padding: 12px;
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.94);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.36);
+  color: #e5e7eb;
+}
+
+.viz-element-select-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.viz-element-select-panel-title {
+  font-weight: 800;
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+.viz-element-select-panel-subtitle {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #fbbf24;
+  line-height: 1.35;
+}
+
+.viz-element-select-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.viz-element-select-tabs {
+  display: flex;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.viz-element-tab {
+  min-width: 70px;
+}
+
+.viz-element-tab.active {
+  background: rgba(59, 130, 246, 0.18);
+  border-color: rgba(59, 130, 246, 0.55);
+  color: #60a5fa;
+}
+
+.viz-element-tab-body {
+  margin-top: 10px;
+}
+
+.viz-element-select-help {
+  font-size: 12px;
+  color: #fbbf24;
+  line-height: 1.4;
+}
+
+.viz-element-id-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.viz-element-id-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: #cbd5e1;
+}
+
+.viz-element-id-row input {
+  width: 92px;
+  height: 26px;
+  border-radius: 6px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(15, 23, 42, 0.72);
+  color: #e5e7eb;
+  padding: 3px 7px;
+  font: inherit;
+}
+
+.viz-element-select-status {
+  color: #cbd5e1;
+  font-size: 12px;
+  margin-top: 10px;
+  white-space: nowrap;
+}
+
+#viz-probe-toggle {
+  background: rgba(217, 119, 6, 0.16);
+  border-color: rgba(217, 119, 6, 0.62);
+  color: #fbbf24;
+  font-weight: 800;
+}
+
+#viz-probe-toggle.active {
+  background: #d97706;
+  color: #fff;
+  border-color: #d97706;
+}
+
+.viz-element-select-toggle,
+#viz-probe-toggle,
+#viz-compare-toggle {
+  min-width: 84px;
+  padding-left: 12px;
+  padding-right: 12px;
+  font-size: 12px;
+  height: 28px;
+  line-height: 20px;
+}
+
+.viz-probe-mode {
+  display: inline-flex;
+  gap: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  overflow: hidden;
+  align-items: stretch;
+}
+
+.viz-probe-mode-btn {
+  /* Override the default .viz-btn rounding so the two segments merge
+     into a single pill. The active one fills in. */
+  border-radius: 0 !important;
+  border: none !important;
+  padding: 4px 10px !important;
+  font-size: 12px !important;
+  min-width: 36px;
+}
+
+.viz-probe-mode-btn.active {
+  background: #1f6feb;
+  color: #fff;
+}
+
+.viz-probe-counter {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: rgba(15, 23, 42, 0.04);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  min-width: 38px;
+  justify-content: center;
+}
+
+.viz-probe-counter.viz-probe-counter-warn {
+  background: rgba(217, 119, 6, 0.14);
+  color: #b45309;
+  border-color: rgba(217, 119, 6, 0.45);
+  font-weight: 700;
+}
+
+.viz-probe-mode-btn:disabled,
+.viz-probe-frames-wrap:has(input:disabled) {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
+/* Once probe mode is on, the canvases use a crosshair instead of grab.
+   We only apply this when the wrap has the data-probing attribute set
+   by JS so the default grab/grabbing cursors stay untouched otherwise. */
+.viz-canvas-wrap[data-probing="1"] .viz-canvas-panel canvas,
+.viz-canvas-wrap[data-probing="1"] .viz-canvas-panel canvas:active {
+  cursor: crosshair;
+}
+
+.viz-canvas-wrap[data-element-selecting="1"] .viz-canvas-panel canvas,
+.viz-canvas-wrap[data-element-selecting="1"] .viz-canvas-panel canvas:active {
+  cursor: cell;
+}
+
+.viz-element-box {
+  position: absolute;
+  z-index: 7;
+  border: 2px solid #f59e0b;
+  background: rgba(245, 158, 11, 0.16);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.65) inset;
+  pointer-events: none;
+}
+
+/* Transient single hover card. Follows the cursor while the user is in
+   probe mode; ``pointer-events:none`` so it does NOT swallow the
+   mousedown that pins a card. */
+.viz-probe-hover-card {
+  position: fixed;
+  z-index: 12;
+  min-width: 220px;
+  max-width: 360px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(15, 23, 42, 0.22);
+  border-radius: 6px;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.18);
+  color: #111827;
+  font-size: 12px;
+  line-height: 1.45;
+  pointer-events: none;
+  opacity: 0.96;
+}
+
+/* Pinned probe-card host: invisible container that holds the absolutely
+   positioned cards. Sits behind viz-empty/labels but above the canvas
+   image so the cards float over the rendering. */
+.viz-probe-pin-host {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 6;
+}
+
+.viz-probe-marker {
+  position: absolute;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.viz-probe-marker-node {
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+  margin-top: -6px;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  background: #e11d48;
+  box-shadow: 0 0 0 2px rgba(225, 29, 72, 0.45), 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+
+.viz-probe-marker-label {
+  position: absolute;
+  left: 12px;
+  top: -18px;
+  min-width: 38px;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(220, 38, 38, 0.35);
+  color: #dc2626;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.2;
+  white-space: nowrap;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.55);
+}
+
+.viz-probe-marker-element {
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.viz-probe-marker-element line {
+  stroke: #e11d48;
+  stroke-width: 3;
+  stroke-linecap: round;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45));
+}
+
+.viz-element-selection-marker line {
+  stroke: #f59e0b;
+  stroke-width: 3.5;
+  stroke-dasharray: 8 4;
+}
+
+.viz-element-selection-marker .viz-probe-marker-svg-label {
+  fill: #b45309;
+}
+
+.viz-probe-marker-svg-label {
+  fill: #dc2626;
+  stroke: rgba(255, 255, 255, 0.9);
+  stroke-width: 3px;
+  paint-order: stroke;
+  font-size: 12px;
+  font-weight: 800;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.viz-probe-marker-hover {
+  z-index: 5;
+  opacity: 0.9;
+}
+
+.viz-probe-marker-hover.viz-probe-marker-node {
+  width: 10px;
+  height: 10px;
+  margin-left: -5px;
+  margin-top: -5px;
+}
+
+.viz-probe-marker-hover .viz-probe-marker-label,
+.viz-probe-marker-hover .viz-probe-marker-svg-label {
+  display: none;
+}
+
+.viz-probe-marker-hover.viz-probe-marker-element line {
+  stroke-width: 2.5;
+  stroke-dasharray: 7 4;
+}
+
+.viz-probe-card {
+  /* Same visual language as the math overlay so the page feels
+     coherent. Unlike the math overlay we don't expose --s scaling for
+     this iteration — probe cards have a fixed compact layout because
+     they hold strictly structured data that must stay readable
+     alongside the colour map. */
+  position: absolute;
+  z-index: 6;
+  top: 60px;
+  left: 60px;
+  min-width: 240px;
+  min-height: 126px;
+  max-width: 360px;
+  max-height: 70%;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(15, 23, 42, 0.22);
+  border-radius: 6px;
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.18);
+  color: #111827;
+  font-size: 12px;
+  line-height: 1.45;
+  pointer-events: auto;
+  cursor: grab;
+  user-select: none;
+  overflow: auto;
+  resize: both;
+  box-sizing: border-box;
+}
+
+.viz-probe-card.viz-probe-dragging {
+  cursor: grabbing;
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.28);
+}
+
+.viz-probe-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #334155;
+  margin-bottom: 4px;
+}
+
+.viz-probe-card-mode {
+  padding: 0 6px;
+  border-radius: 3px;
+  background: #1f6feb;
+  color: #fff;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+
+.viz-probe-card-mode[data-mode="element"] {
+  background: #2da44e;
+}
+
+.viz-probe-card-source {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.viz-probe-card-index {
+  flex: 0 0 auto;
+  color: #0f172a;
+  font-weight: 800;
+  font-size: 11px;
+}
+
+.viz-probe-card-close {
+  cursor: pointer;
+  font-weight: 800;
+  color: #94a3b8;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0 4px;
+  margin: -4px -4px -4px 0;
+  font-size: 18px;
+  line-height: 1;
+  border-radius: 4px;
+}
+
+.viz-probe-card-close:hover {
+  color: #ef4444;
+}
+
+.viz-probe-card-row {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.viz-probe-card-row span {
+  color: #475569;
+  font-weight: 600;
+}
+
+.viz-probe-card-row strong {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.viz-probe-card-gauss {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: #1f2937;
+}
+
+.viz-probe-card-gauss-list {
+  margin-top: 2px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.viz-probe-card-gauss-list code {
+  background: rgba(15, 23, 42, 0.05);
+  padding: 0 4px;
+  border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  margin-right: 4px;
+  color: #475569;
+}
+
+.viz-modal-card.viz-probe-compare-modal-card {
+  width: min(1440px, calc(100vw - 28px));
+}
+
+.viz-probe-compare-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.viz-probe-compare-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 6px;
+  align-items: stretch;
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  min-width: 0;
+  overflow: visible;
+}
+
+.viz-probe-compare-side {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+}
+
+.viz-probe-compare-side-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  justify-content: center;
+  border-radius: 7px;
+  font-size: 19px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.viz-probe-compare-add-row {
+  border-color: rgba(96, 165, 250, 0.46);
+  color: #dbeafe;
+}
+
+.viz-probe-compare-remove {
+  border-color: rgba(248, 113, 113, 0.38);
+  color: #fecaca;
+}
+
+.viz-probe-compare-side-btn:disabled {
+  opacity: 0.32;
+  cursor: not-allowed;
+}
+
+.viz-probe-compare-main {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  gap: 5px 8px;
+  align-items: center;
+}
+
+.viz-probe-compare-row-head {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  color: var(--text-primary);
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.viz-probe-compare-row-head strong {
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.viz-probe-compare-grid {
+  display: grid;
+  grid-template-columns: 42px minmax(360px, 1fr) minmax(150px, 0.34fr);
+  gap: 3px 8px;
+  align-items: center;
+  min-width: 0;
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+
+.viz-probe-compare-colhead {
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.viz-probe-compare-index {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.viz-probe-compare-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  min-width: 0;
+}
+
+.viz-probe-compare-row select {
+  width: 100%;
+  max-width: 100%;
+  min-height: 22px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+  padding: 1px 8px;
+  min-width: 0;
+}
+
+.viz-probe-compare-row option,
+.viz-toolbar option {
+  color: #111827;
+  background: #ffffff;
+}
+
+.viz-probe-compare-row option:checked,
+.viz-toolbar option:checked {
+  color: #ffffff;
+  background: #2563eb;
+}
+
+.viz-probe-compare-shared {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 6px 20px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0;
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.viz-probe-compare-shared .viz-inline-check,
+.viz-probe-compare-log {
+  min-height: 22px;
+  white-space: nowrap;
+}
+
+.viz-probe-compare-log {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.viz-probe-compare-log select {
+  min-width: 96px;
+}
+
+.viz-probe-export-btn {
+  margin-left: 4px;
+}
+
+.viz-probe-chart {
+  position: fixed;
+  z-index: 1180;
+  width: min(920px, calc(100vw - 40px));
+  min-width: 520px;
+  min-height: 300px;
+  resize: both;
+  overflow: auto;
+  border-radius: 10px;
+  background: #ffffff;
+  border: 1px solid rgba(15, 23, 42, 0.22);
+  box-shadow: 0 20px 70px rgba(0, 0, 0, 0.42);
+}
+
+.viz-probe-chart-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  cursor: move;
+  background: #f8fafc;
+  color: #111827;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.16);
+}
+
+.viz-probe-chart-head > div {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.viz-probe-chart-body {
+  padding: 8px;
+  background: #ffffff;
+}
+
+.viz-probe-chart-svg {
+  display: block;
+  width: 100%;
+  height: auto;
 }
 
 .viz-empty {
@@ -1426,6 +2468,11 @@ a:hover { text-decoration: underline; }
   border-radius: 0 0 var(--radius-sm) var(--radius-sm);
 }
 
+.viz-status-bar.viz-status-alert #viz-status-text {
+  color: #dc2626;
+  font-weight: 700;
+}
+
 .viz-status-chip {
   display: inline-flex;
   align-items: center;
@@ -1442,7 +2489,7 @@ a:hover { text-decoration: underline; }
 }
 
 .viz-compare-toolbar {
-  flex: 0 1 auto;
+  flex: 0 0 100%;
 }
 
 .viz-source-group {

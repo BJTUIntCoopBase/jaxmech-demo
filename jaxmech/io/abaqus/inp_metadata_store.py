@@ -27,7 +27,6 @@ _TRACKED_INPUT_KEYS = (
     "nu_override",
     "yield_stress_override",
     "use_b_ext",
-    "gauss_order",
     "n_increments",
     "max_iterations",
     "convergence_tol",
@@ -234,7 +233,6 @@ def _build_analysis_input(inp_meta: dict[str, Any], analysis_input: dict[str, An
         "nu_override": _optional_float(analysis_input.get("nu_override")),
         "yield_stress_override": _optional_float(analysis_input.get("yield_stress_override")),
         "use_b_ext": _binary_flag(analysis_input.get("use_b_ext"), default=0),
-        "gauss_order": _optional_positive_int(analysis_input.get("gauss_order")),
         "n_increments": _positive_int(
             analysis_input.get("n_increments"),
             default=_positive_int(step.get("default_n_increments"), default=1),
@@ -293,9 +291,6 @@ def _merge_metadata(
             "parser_scope": str(snapshot.get("parser_scope") or ""),
             "material_model": str(snapshot.get("material_model") or "linear_elastic"),
             "configured_use_b_ext": str(snapshot.get("use_b_ext", 0)),
-            "configured_gauss_order": ""
-            if snapshot.get("gauss_order") is None
-            else str(snapshot.get("gauss_order")),
             "configured_n_increments": str(snapshot.get("n_increments", 1)),
             "configured_max_iterations": ""
             if snapshot.get("max_iterations") is None

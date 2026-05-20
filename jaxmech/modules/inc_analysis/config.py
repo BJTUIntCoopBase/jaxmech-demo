@@ -11,7 +11,6 @@ from jaxmech.env.workflow_files import resolve_workflow_target
 DEFAULT_CONFIG = {
     "inp_files": [],
     "use_b_ext": 0,
-    "gauss_order": 2,
     "material_model": "auto",
     "n_increments": 1,
     "max_iterations": 25,
@@ -93,7 +92,7 @@ def parse_inc_analysis_config(target: str | Path) -> dict:
         for key, value in _collect_cfg_items(config_path):
             if key == "inp_files":
                 config[key] = _parse_inp_files(value)
-            elif key in {"use_b_ext", "gauss_order", "n_increments", "max_iterations"}:
+            elif key in {"use_b_ext", "n_increments", "max_iterations"}:
                 config[key] = int(ast.literal_eval(value))
             elif key in {"convergence_tol", "E_override", "nu_override", "yield_stress_override"}:
                 config[key] = _parse_optional_float(value)

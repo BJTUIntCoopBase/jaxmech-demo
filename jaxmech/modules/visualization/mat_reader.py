@@ -22,6 +22,16 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 import numpy as np
 
+from jaxmech.io.mat_schema import (
+    FRAME_OUTPUTS_KEY,
+    SHELL_PARAM_KEY,
+    SOLID_PARAM_KEY,
+    VALIDATION_PARAM_KEY,
+    VALIDATION_RESULT_KEY,
+    expand_public_mat_payload,
+    nested_frame_output_shapes,
+    nested_struct_shapes,
+)
 from jaxmech.model.viz_manifest import (
     VIZ_MANIFEST_KEY,
     extract_viz_manifest,
@@ -96,7 +106,9 @@ _ABAQUS_TO_VTK: dict[str, int] = {
     "C3D8": 12, "C3D8R": 12, "C3D8I": 12,
     "C3D20": 25, "C3D20R": 25,
     "CPE3": 5,  "CPS3": 5,
+    "S3": 5,    "S3R": 5,   "STRI3": 5,
     "CPE4": 9,  "CPE4R": 9, "CPS4": 9, "CPS4R": 9,
+    "S4": 9,    "S4R": 9,
     "CPE6": 22, "CPS6": 22,
     "CPE8": 23, "CPS8": 23,
 }
@@ -211,7 +223,7 @@ def _lookup_any(raw: dict, key: str, result_record: Any = None) -> Any:
     """Look up a top-level or shakedown-nested MAT field."""
     if key in raw:
         return raw.get(key)
-    for parent in ("ElasticInputSet", "ConfigInfo"):
+    for parent in ("ElasticInputSet", "ConfigInfo", "RSDMResult", "RSDMInput"):
         value = _struct_get(raw.get(parent), key)
         if value is not None:
             return value
@@ -246,15 +258,11 @@ def _extract_mesh_from_viz_keys(raw: dict) -> tuple:
     ctypes = raw.get("viz_cell_types")
     eletypes = raw.get("viz_cell_block_ele_types")
     if pts is not None and cells is not None and ctypes is not None:
-        cell_types = np.atleast_1d(_squeeze(ctypes)).astype(np.int32)
-        cell_ele_types = None
-        if eletypes is not None:
-            cell_ele_types = np.atleast_1d(_squeeze(eletypes)).astype(object)
         return (
             _squeeze(pts).astype(np.float64),
             _squeeze(cells).astype(np.int64),
-            cell_types,
-            cell_ele_types,
+            _squeeze(ctypes).astype(np.int32),
+            _squeeze(eletypes) if eletypes is not None else None,
         )
     return None, None, None, None
 
@@ -268,59 +276,117 @@ def _extract_mesh_from_inpdata(raw: dict) -> tuple:
     # scipy struct record
     if hasattr(inp, "dtype") and getattr(inp.dtype, "names", None):
         src = inp.flat[0] if inp.size == 1 else inp
-        try:
-            points = np.asarray(src["points"], dtype=np.float64)
-            points = _squeeze(points)
-        except Exception:
-            return None, None, None, None
+        names = set(inp.dtype.names or ())
 
-        try:
-            ctn = src["cell_block_cell_types"]
-            ctn = [str(np.asarray(x).flat[0]) for x in np.asarray(ctn).flat]
-        except Exception:
-            ctn = []
+        if {"points", "cell_block_cells"}.issubset(names):
+            try:
+                points = np.asarray(src["points"], dtype=np.float64)
+                points = _squeeze(points)
+            except Exception:
+                points = None
 
-        try:
-            etn = src["cell_block_ele_types"]
-            etn = [str(np.asarray(x).flat[0]) for x in np.asarray(etn).flat]
-        except Exception:
-            etn = ctn
+            try:
+                ctn = src["cell_block_cell_types"]
+                ctn = [str(np.asarray(x).flat[0]) for x in np.asarray(ctn).flat]
+            except Exception:
+                ctn = []
 
-        try:
-            cblocks = src["cell_block_cells"]
-            cblocks = [np.asarray(x, dtype=np.int64) for x in np.asarray(cblocks).flat]
-        except Exception:
-            return None, None, None, None
+            try:
+                etn = src["cell_block_ele_types"]
+                etn = [str(np.asarray(x).flat[0]) for x in np.asarray(etn).flat]
+            except Exception:
+                etn = ctn
 
-        all_cells_parts: list[np.ndarray] = []
-        all_types: list[int] = []
-        all_eletypes: list[str] = []
+            try:
+                cblocks = src["cell_block_cells"]
+                cblocks = [np.asarray(x, dtype=np.int64) for x in np.asarray(cblocks).flat]
+            except Exception:
+                cblocks = []
 
-        for idx, conn_raw in enumerate(cblocks):
-            conn = _squeeze(conn_raw).astype(np.int64)
-            if conn.ndim == 1:
-                continue
-            n_elem, npe = conn.shape
-            ele_key = etn[idx].upper() if idx < len(etn) else ""
-            vtk_type = _ABAQUS_TO_VTK.get(ele_key, 12)
-            prefix = np.full((n_elem, 1), npe, dtype=np.int64)
-            all_cells_parts.append(np.hstack([prefix, conn]))
-            all_types.extend([vtk_type] * n_elem)
-            all_eletypes.extend([ele_key] * n_elem)
+            all_cells_parts: list[np.ndarray] = []
+            all_types: list[int] = []
+            all_eletypes: list[str] = []
 
-        if not all_cells_parts:
-            return None, None, None, None
-        cells = np.concatenate(all_cells_parts).reshape(-1).astype(np.int64)
-        return (
-            points,
-            cells,
-            np.asarray(all_types, dtype=np.int32),
-            np.asarray(all_eletypes, dtype=object),
-        )
+            for idx, conn_raw in enumerate(cblocks):
+                conn = _squeeze(conn_raw).astype(np.int64)
+                if conn.ndim == 1:
+                    continue
+                n_elem, npe = conn.shape
+                ele_key = etn[idx].upper() if idx < len(etn) else ""
+                vtk_type = _ABAQUS_TO_VTK.get(ele_key, 12)
+                prefix = np.full((n_elem, 1), npe, dtype=np.int64)
+                all_cells_parts.append(np.hstack([prefix, conn]))
+                all_types.extend([vtk_type] * n_elem)
+                all_eletypes.extend([ele_key] * n_elem)
+
+            if points is not None and all_cells_parts:
+                cells = np.concatenate(all_cells_parts).reshape(-1).astype(np.int64)
+                return (
+                    points,
+                    cells,
+                    np.asarray(all_types, dtype=np.int32),
+                    np.asarray(all_eletypes, dtype=object),
+                )
+
+        if {"node_coords", "elem_conn"}.issubset(names):
+            try:
+                points = _squeeze(np.asarray(src["node_coords"], dtype=np.float64))
+                if points.ndim == 1:
+                    dim = 3 if points.size % 3 == 0 else 2
+                    points = points.reshape((-1, dim))
+                conn = _squeeze(np.asarray(src["elem_conn"], dtype=np.int64))
+                if conn.ndim == 1:
+                    conn = conn.reshape(1, -1)
+                labels = _squeeze(np.asarray(src["node_labels"], dtype=np.int64)) if "node_labels" in names else None
+                if labels is not None and labels.size and conn.size and int(np.min(conn)) >= 1:
+                    label_to_idx = {int(label): idx for idx, label in enumerate(labels.reshape(-1))}
+                    conn = np.vectorize(lambda item: label_to_idx.get(int(item), int(item) - 1))(conn).astype(np.int64)
+                ele_raw = src["ele_type"] if "ele_type" in names else ""
+                ele_key = str(np.asarray(ele_raw).reshape(-1)[0]).upper() if np.asarray(ele_raw).size else ""
+                vtk_type = _ABAQUS_TO_VTK.get(ele_key, 5 if conn.shape[1] == 3 else 9 if conn.shape[1] == 4 else 12)
+                prefix = np.full((conn.shape[0], 1), conn.shape[1], dtype=np.int64)
+                cells = np.hstack([prefix, conn]).reshape(-1).astype(np.int64)
+                return (
+                    points,
+                    cells,
+                    np.full(conn.shape[0], vtk_type, dtype=np.int32),
+                    np.asarray([ele_key or f"N{conn.shape[1]}"] * conn.shape[0], dtype=object),
+                )
+            except Exception:
+                return None, None, None, None
+
+        return None, None, None, None
 
     # plain dict-style InpData
     if isinstance(inp, dict):
         points = inp.get("points")
+        if points is None and {"node_coords", "elem_conn"}.issubset(inp.keys()):
+            try:
+                points = _squeeze(np.asarray(inp.get("node_coords"), dtype=np.float64))
+                if points.ndim == 1:
+                    dim = 3 if points.size % 3 == 0 else 2
+                    points = points.reshape((-1, dim))
+                conn = _squeeze(np.asarray(inp.get("elem_conn"), dtype=np.int64))
+                if conn.ndim == 1:
+                    conn = conn.reshape(1, -1)
+                labels = _squeeze(np.asarray(inp.get("node_labels"), dtype=np.int64)) if inp.get("node_labels") is not None else None
+                if labels is not None and labels.size and conn.size and int(np.min(conn)) >= 1:
+                    label_to_idx = {int(label): idx for idx, label in enumerate(labels.reshape(-1))}
+                    conn = np.vectorize(lambda item: label_to_idx.get(int(item), int(item) - 1))(conn).astype(np.int64)
+                ele_raw = inp.get("ele_type", "")
+                ele_arr = np.asarray(ele_raw)
+                ele_key = str(ele_arr.reshape(-1)[0]).upper() if ele_arr.size else ""
+                vtk_type = _ABAQUS_TO_VTK.get(ele_key, 5 if conn.shape[1] == 3 else 9 if conn.shape[1] == 4 else 12)
+                prefix = np.full((conn.shape[0], 1), conn.shape[1], dtype=np.int64)
+                cells = np.hstack([prefix, conn]).reshape(-1).astype(np.int64)
+                return (
+                    points,
+                    cells,
+                    np.full(conn.shape[0], vtk_type, dtype=np.int32),
+                    np.asarray([ele_key or f"N{conn.shape[1]}"] * conn.shape[0], dtype=object),
+                )
+            except Exception:
+                return None, None, None, None
         if points is None:
             return None, None, None, None
         points = _squeeze(np.asarray(points)).astype(np.float64)
@@ -395,6 +461,25 @@ def _infer_component_count(arr: np.ndarray, vd: VizData, location: str) -> int:
                 return int(n_comp)
 
     return 1
+
+
+def _reshape_nodal_field_if_flat(arr: np.ndarray, vd: VizData) -> np.ndarray:
+    """Restore flat nodal DOF arrays to ``(..., n_node, n_comp)`` when possible."""
+    data = np.asarray(arr, dtype=np.float64)
+    if vd.points is None:
+        return data
+    n_nodes = int(vd.points.shape[0])
+    if n_nodes <= 0:
+        return data
+    if data.ndim == 1 and data.size % n_nodes == 0:
+        n_comp = data.size // n_nodes
+        if 1 <= n_comp <= 6:
+            return data.reshape(n_nodes, n_comp)
+    if data.ndim == 2 and data.shape[1] % n_nodes == 0:
+        n_comp = data.shape[1] // n_nodes
+        if 1 <= n_comp <= 6:
+            return data.reshape(data.shape[0], n_nodes, n_comp)
+    return data
 
 
 # Single-frame field discovery patterns
@@ -483,6 +568,31 @@ _FIELD_DISPLAY_METADATA: dict[str, dict[str, str]] = {
     "max_effective_excess_per_gp": {
         "symbol": r"\sigma^{cs}_{p,vm,\max}",
         "formula": r"\sigma^{cs}_{p,vm,\max}=\max_{t\in[0,T]}\sigma^{cs}_{p,vm}(t)",
+    },
+    "rsdms_XS_path": {
+        "symbol": r"\sigma^{cs}_{p,vm,\mathrm{path}}",
+        "formula": r"\sigma^{cs}_{p,vm,\mathrm{path}}=\max_{\mathrm{segment}}\sigma^{cs}_{p,vm}",
+        "description": "Maximum von Mises effective excess stress on each RSDM-S loading path segment",
+    },
+    "rsdms_XS_path_SNEG": {
+        "symbol": r"\sigma^{cs}_{p,vm,\mathrm{path}}^{SNEG}",
+        "formula": r"\sigma^{cs}_{p,vm,\mathrm{path}}=\max_{\mathrm{segment}}\sigma^{cs}_{p,vm}",
+        "description": "Maximum von Mises effective excess stress on each RSDM-S loading path segment, SNEG surface",
+    },
+    "rsdms_XS_path_SPOS": {
+        "symbol": r"\sigma^{cs}_{p,vm,\mathrm{path}}^{SPOS}",
+        "formula": r"\sigma^{cs}_{p,vm,\mathrm{path}}=\max_{\mathrm{segment}}\sigma^{cs}_{p,vm}",
+        "description": "Maximum von Mises effective excess stress on each RSDM-S loading path segment, SPOS surface",
+    },
+    "rsdms_XS_vmmax": {
+        "symbol": r"\sigma^{cs}_{p,vm,\max}",
+        "formula": r"\sigma^{cs}_{p,vm,\max}=\max_{\mathrm{cycle}}\sigma^{cs}_{p,vm}",
+        "description": "Maximum von Mises effective excess stress over the whole RSDM-S loading cycle",
+    },
+    "rsdm_XS_path": {
+        "symbol": r"\sigma^{cs}_{p,vm,\mathrm{path}}",
+        "formula": r"\sigma^{cs}_{p,vm,\mathrm{path}}=\max_{\mathrm{path}}\sigma^{cs}_{p,vm}(t)",
+        "description": "Maximum von Mises effective excess stress on each RSDM loading path segment",
     },
     "classification_ratio_per_gp": {
         "symbol": r"r_g",
@@ -823,8 +933,56 @@ def _field_sort_key(item: dict) -> tuple:
     )
 
 
+def _manifest_default_selected(key: str, raw_field: Mapping[str, Any], available: bool = True) -> bool:
+    """Return the reader-side default selection for manifest fields.
+
+    Older shakedown MAT files may already carry a manifest where the inequality
+    multiplier was marked optional even though the expensive dual reconstruction
+    result is present.  Treat the field as default-visible once it exists.
+    """
+    if str(key) == "shakedown_inequality_multiplier" and available:
+        return True
+    if str(key) == "rsdms_XS_vmmax" and available:
+        return True
+    return bool(raw_field.get("default_selected", False))
+
+
 def _entry_map(entries: Sequence[tuple[str, tuple[int, ...], str]]) -> dict[str, tuple[tuple[int, ...], str]]:
     return {str(name): (tuple(int(v) for v in shape), str(mat_class)) for name, shape, mat_class in entries}
+
+
+def _load_nested_schema_shapes(mat_path: Path) -> dict[str, tuple[int, ...]]:
+    import scipy.io as sio
+
+    try:
+        raw = sio.loadmat(
+            str(mat_path),
+            squeeze_me=False,
+            struct_as_record=False,
+            variable_names=[FRAME_OUTPUTS_KEY, SHELL_PARAM_KEY, SOLID_PARAM_KEY],
+        )
+    except Exception:
+        return {}
+    shapes: dict[str, tuple[int, ...]] = {}
+    if FRAME_OUTPUTS_KEY in raw:
+        shapes.update(nested_frame_output_shapes(raw.get(FRAME_OUTPUTS_KEY)))
+    if SHELL_PARAM_KEY in raw:
+        shapes.update(nested_struct_shapes(raw.get(SHELL_PARAM_KEY)))
+    if SOLID_PARAM_KEY in raw:
+        shapes.update(nested_struct_shapes(raw.get(SOLID_PARAM_KEY)))
+    return shapes
+
+
+def _entries_with_nested_schema_shapes(
+    entries: Sequence[tuple[str, tuple[int, ...], str]],
+    nested_shapes: Mapping[str, tuple[int, ...]],
+) -> list[tuple[str, tuple[int, ...], str]]:
+    out = [(str(name), tuple(int(v) for v in shape), str(mat_class)) for name, shape, mat_class in entries]
+    present = {name for name, _shape, _mat_class in out}
+    for key, shape in nested_shapes.items():
+        if key not in present:
+            out.append((str(key), tuple(int(v) for v in shape), "nested"))
+    return out
 
 
 def _manifest_source_keys(field: Mapping[str, Any]) -> list[str]:
@@ -894,7 +1052,7 @@ def _fields_from_manifest(
             "n_components": int(n_components),
             "family": family,
             "tensor_kind": str(raw_field.get("tensor_kind", _tensor_kind(family, n_components, key))),
-            "default_selected": bool(raw_field.get("default_selected", False)),
+            "default_selected": _manifest_default_selected(key, raw_field, available),
             "visualizable": True,
             "source_key": str(raw_field.get("source_key", "")),
             "source_keys": [str(item) for item in raw_field.get("source_keys") or []],
@@ -946,14 +1104,30 @@ def _apply_manifest_field_info(
         )
 
 
-def _normalize_manifest_for_reader(manifest: Mapping[str, Any] | None) -> dict[str, Any] | None:
+def _incremental_shell_display_spec(key: str) -> dict[str, str]:
+    try:
+        from jaxmech.modules.inc_analysis.plastic.visualize_mat import (
+            shell_incremental_field_display_spec,
+        )
+
+        return shell_incremental_field_display_spec(key)
+    except Exception:
+        return {}
+
+
+def _normalize_manifest_for_reader(
+    manifest: Mapping[str, Any] | None,
+    available_keys: Optional[Sequence[str]] = None,
+) -> dict[str, Any] | None:
     """Apply reader-side migrations for manifests written by older local builds."""
     if manifest is None:
         return None
     out = dict(manifest)
     analysis_type = str(out.get("analysis_type", "")).strip().lower()
+    family = str(out.get("family", "")).strip().lower()
     fields: list[dict[str, Any]] = []
     seen_keys: set[str] = set()
+    available = {str(key) for key in (available_keys or [])}
     for raw_field in manifest.get("fields") or []:
         if not isinstance(raw_field, Mapping):
             continue
@@ -980,11 +1154,45 @@ def _normalize_manifest_for_reader(manifest: Mapping[str, Any] | None) -> dict[s
             field["source_keys"] = source_keys
         if key in _SHAKEDOWN_FIELD_SPECS:
             spec = _SHAKEDOWN_FIELD_SPECS[key]
-            field.setdefault("symbol", spec.get("symbol", ""))
-            field.setdefault("formula", spec.get("formula", ""))
-            field.setdefault("description", spec.get("description", ""))
+            for meta_name in ("symbol", "formula", "description"):
+                if not field.get(meta_name):
+                    field[meta_name] = spec.get(meta_name, "")
+        if analysis_type == "nonlinear_static" and family == "shell":
+            spec = _incremental_shell_display_spec(key)
+            if spec:
+                if spec.get("label"):
+                    field["label"] = spec["label"]
+                for meta_name in ("symbol", "formula", "description"):
+                    if not field.get(meta_name):
+                        field[meta_name] = spec.get(meta_name, "")
         seen_keys.add(key)
         fields.append(field)
+    if analysis_type == "nonlinear_static" and family == "shell" and available:
+        for key in (
+            "shell_layer_plastic_strain",
+            "frame_shell_layer_plastic_strain",
+            "frame_shell_layer_plastic_strain_SNEG",
+            "frame_shell_layer_plastic_strain_SPOS",
+        ):
+            if key in seen_keys or key not in available:
+                continue
+            spec = _incremental_shell_display_spec(key)
+            fields.append({
+                "key": key,
+                "label": spec.get("label", key),
+                "family": "strain",
+                "location": "gauss",
+                "frames": "frames" if key.startswith("frame_") else "single",
+                "frame_axis": "increment" if key.startswith("frame_") else "",
+                "tensor_kind": "strain_voigt",
+                "n_components": 4,
+                "default_selected": False,
+                "scalar_options": ["components", "magnitude"],
+                "symbol": spec.get("symbol", ""),
+                "formula": spec.get("formula", ""),
+                "description": spec.get("description", ""),
+            })
+            seen_keys.add(key)
     if analysis_type == "shakedown" and any(
         str(field.get("key", "")) in {"shakedown_SF_res", "shakedown_SM_res", "shakedown_SF_tot", "shakedown_SM_tot"}
         for field in fields
@@ -997,6 +1205,7 @@ def _normalize_manifest_for_reader(manifest: Mapping[str, Any] | None) -> dict[s
     if (
         analysis_type == "shakedown"
         and "shakedown_inequality_multiplier" not in seen_keys
+        and "dual_variables_ineq" in available
     ):
         spec = _SHAKEDOWN_FIELD_SPECS["shakedown_inequality_multiplier"]
         fields.append({
@@ -1014,6 +1223,83 @@ def _normalize_manifest_for_reader(manifest: Mapping[str, Any] | None) -> dict[s
             "symbol": spec.get("symbol", ""),
             "formula": spec.get("formula", ""),
             "description": spec.get("description", ""),
+        })
+    if (
+        analysis_type == "rsdm_shakedown"
+        and "rsdms_XS_path" not in seen_keys
+        and family != "shell"
+        and "shell_layer_stress_cases" not in available
+        and ("ResultsSet" in available or {"yield_ratio", "vertex_load_matrix"} <= available)
+    ):
+        display_meta = _FIELD_DISPLAY_METADATA["rsdms_XS_path"]
+        fields.append({
+            "key": "rsdms_XS_path",
+            "label": "RSDM-S path effective excess stress",
+            "family": "other",
+            "location": "gauss",
+            "tensor_kind": "scalar",
+            "n_components": 1,
+            "frames": "frames",
+            "frame_axis": "path",
+            "default_selected": False,
+            "source_key": "ResultsSet",
+            "source_keys": ["ResultsSet", "yield_ratio", "vertex_load_matrix"],
+            "scalar_options": ["scalar"],
+            "symbol": display_meta.get("symbol", ""),
+            "formula": display_meta.get("formula", ""),
+            "description": display_meta.get("description", ""),
+        })
+    if (
+        analysis_type == "rsdm_shakedown"
+        and (family == "shell" or "shell_layer_stress_cases" in available)
+        and ("ResultsSet" in available or {"yield_ratio", "vertex_load_matrix"} <= available)
+    ):
+        for key, label in (
+            ("rsdms_XS_path_SNEG", "RSDM-S XS_path (inner/SNEG)"),
+            ("rsdms_XS_path_SPOS", "RSDM-S XS_path (outer/SPOS)"),
+        ):
+            if key in seen_keys:
+                continue
+            display_meta = _FIELD_DISPLAY_METADATA[key]
+            fields.append({
+                "key": key,
+                "label": label,
+                "family": "other",
+                "location": "gauss",
+                "tensor_kind": "scalar",
+                "n_components": 1,
+                "frames": "frames",
+                "frame_axis": "path",
+                "default_selected": False,
+                "source_key": "ResultsSet",
+                "source_keys": ["ResultsSet", "yield_ratio", "vertex_load_matrix", "shell_layer_stress_cases"],
+                "scalar_options": ["scalar"],
+                "symbol": display_meta.get("symbol", ""),
+                "formula": display_meta.get("formula", ""),
+                "description": display_meta.get("description", ""),
+            })
+    if (
+        (analysis_type in {"rsdm", ""} or analysis_type.startswith("rsdm_"))
+        and "rsdm_XS_path" not in seen_keys
+        and ({"rsdm_XS_cyc"} & available or {"excess_stress_cycle", "field_excess_stress_cycle"} & available)
+    ):
+        display_meta = _FIELD_DISPLAY_METADATA["rsdm_XS_path"]
+        fields.append({
+            "key": "rsdm_XS_path",
+            "label": "XS_path",
+            "family": "other",
+            "location": "gauss",
+            "tensor_kind": "scalar",
+            "n_components": 1,
+            "frames": "frames",
+            "frame_axis": "path",
+            "default_selected": False,
+            "source_key": "rsdm_XS_cyc",
+            "source_keys": ["rsdm_XS_cyc", "excess_stress_cycle", "field_excess_stress_cycle"],
+            "scalar_options": ["scalar"],
+            "symbol": display_meta.get("symbol", ""),
+            "formula": display_meta.get("formula", ""),
+            "description": display_meta.get("description", ""),
         })
     out["fields"] = fields
     return out
@@ -1105,7 +1391,7 @@ def _build_legacy_manifest(mat_path: Path, entries: Sequence[tuple[str, tuple[in
     builders = []
     if {"DirectCyclicResult", "DirectCyclicInput"} & names or any(name.startswith("frame_") for name in names):
         builders.append("jaxmech.modules.direct_methods.dca.visualize_mat")
-    if {"PlasticResult", "PlasticStateLayout", "frame_increment_index", "gauss_plastic_strain"} & names:
+    if {"PlasticResult", "PlasticStateLayout", "plastic_state_layout", "frame_increment_index", "gauss_plastic_strain"} & names:
         builders.insert(0, "jaxmech.modules.inc_analysis.plastic.visualize_mat")
     if {"residual_stress_cycle", "total_stress_cycle", "excess_stress_cycle"} & names:
         builders.insert(0, "jaxmech.modules.direct_methods.rsdm.visualize_mat")
@@ -1159,7 +1445,7 @@ _SHAKEDOWN_FIELD_SPECS: dict[str, dict] = {
         "label": "Yield inequality Lagrange multiplier",
         "family": "other",
         "tensor_kind": "scalar",
-        "default_selected": False,
+        "default_selected": True,
         **_FIELD_DISPLAY_METADATA["shakedown_inequality_multiplier"],
     },
     "shakedown_equality_violation": {
@@ -1393,6 +1679,8 @@ def _shakedown_arrays(raw: dict, result_record: Any = None) -> dict[str, Any]:
         "objective_value": _lookup_any(raw, "objective_value", result_record),
         "residual_stress": _lookup_any(raw, "residual_stress", result_record),
         "yield_ratio": _lookup_any(raw, "yield_ratio", result_record),
+        "yield_stress": _lookup_any(raw, "yield_stress", result_record),
+        "yield_values": _lookup_any(raw, "yield_values", result_record),
         "dual_variables_ineq": _lookup_any(raw, "dual_variables_ineq", result_record),
         "max_effective_excess_per_gp": _lookup_any(raw, "max_effective_excess_per_gp", result_record),
         "family": _lookup_any(raw, "family", result_record),
@@ -1405,7 +1693,12 @@ def _shakedown_arrays(raw: dict, result_record: Any = None) -> dict[str, Any]:
         "shell_generalized_stress_cases": _lookup_any(raw, "shell_generalized_stress_cases", result_record),
         "shell_section_z": _lookup_any(raw, "shell_section_z", result_record),
         "shell_elem_thickness": _lookup_any(raw, "shell_elem_thickness", result_record),
+        "E": _lookup_any(raw, "E", result_record),
+        "nu": _lookup_any(raw, "nu", result_record),
         "residual_generalized_stress": _lookup_any(raw, "residual_generalized_stress", result_record),
+        "residual_generalized_strain": _lookup_any(raw, "residual_generalized_strain", result_record),
+        "shell_nforc": _lookup_any(raw, "shell_nforc", result_record),
+        "shell_force_error": _lookup_any(raw, "shell_force_error", result_record),
         "free_dofs": _lookup_any(raw, "free_dofs", result_record),
         "C_sparse": _lookup_any(raw, "C_sparse", result_record),
         "equilibrium_residual": _lookup_any(raw, "equilibrium_residual", result_record),
@@ -1518,6 +1811,19 @@ def _shakedown_layer_total_surface(parts: dict[str, Any], surface: str) -> Optio
         return None
     elastic_vertices = np.einsum("gci,iv->gcv", elastic_surface_cases, vertex_load)
     return residual_surface[np.newaxis, :, :] + float(alpha) * np.moveaxis(elastic_vertices, 2, 0)
+
+
+def _plane_stress_compliance(stress: np.ndarray, *, e_mod: float, nu: float) -> np.ndarray:
+    arr = np.asarray(stress, dtype=np.float64)
+    if arr.size == 0 or arr.shape[-1] < 3:
+        return arr
+    e = float(e_mod) if np.isfinite(float(e_mod)) and abs(float(e_mod)) > 0.0 else 1.0
+    n = float(nu) if np.isfinite(float(nu)) else 0.3
+    out = np.zeros_like(arr, dtype=np.float64)
+    out[..., 0] = (arr[..., 0] - n * arr[..., 1]) / e
+    out[..., 1] = (arr[..., 1] - n * arr[..., 0]) / e
+    out[..., 2] = 2.0 * (1.0 + n) * arr[..., 2] / e
+    return out
 
 
 def _shakedown_layer_yield_surface(parts: dict[str, Any], surface: str) -> Optional[np.ndarray]:
@@ -2062,21 +2368,25 @@ def inspect_mat_fields(mat_path: str | Path) -> dict:
 
     mat_path = Path(mat_path)
     entries = sio.whosmat(str(mat_path))
+    nested_shapes = _load_nested_schema_shapes(mat_path)
+    entries_for_schema = _entries_with_nested_schema_shapes(entries, nested_shapes)
 
     manifest = load_viz_manifest_from_mat(mat_path)
     if manifest is None:
-        manifest = _build_legacy_manifest(mat_path, entries)
+        manifest = _build_legacy_manifest(mat_path, entries_for_schema)
         if manifest is not None:
             entries = sio.whosmat(str(mat_path))
-    manifest = _rebuild_rsdm_shakedown_manifest_if_needed(mat_path, manifest, entries)
-    manifest = _normalize_manifest_for_reader(manifest)
-    if _whos_has_validation(entries):
-        return inspect_validation_fields(mat_path, entries)
+            nested_shapes = _load_nested_schema_shapes(mat_path)
+            entries_for_schema = _entries_with_nested_schema_shapes(entries, nested_shapes)
+    manifest = _rebuild_rsdm_shakedown_manifest_if_needed(mat_path, manifest, entries_for_schema)
+    manifest = _normalize_manifest_for_reader(manifest, [name for name, _shape, _mat_class in entries_for_schema])
+    if _whos_has_validation(entries_for_schema):
+        return inspect_validation_fields(mat_path, entries_for_schema)
     if manifest is not None:
         if str(manifest.get("analysis_type", "")).strip().lower() == "shakedown":
             supplemental = _inspect_shakedown_fields(mat_path)
             fields = [
-                field for field in _fields_from_manifest(manifest, entries)
+                field for field in _fields_from_manifest(manifest, entries_for_schema)
                 if str(field.get("key", "")) not in _SHAKEDOWN_FIELD_SPECS
             ]
             seen = {str(field.get("key", "")) for field in fields}
@@ -2086,15 +2396,15 @@ def inspect_mat_fields(mat_path: str | Path) -> dict:
                     seen.add(str(field.get("key", "")))
             fields.sort(key=_field_sort_key)
         else:
-            fields = _fields_from_manifest(manifest, entries)
+            fields = _fields_from_manifest(manifest, entries_for_schema)
         return {
             "source": str(mat_path),
             "manifest": manifest,
             "fields": fields,
         }
 
-    field_context = _infer_field_context_from_whos(entries)
-    field_context = _augment_field_context_from_inpdata(mat_path, field_context, entries)
+    field_context = _infer_field_context_from_whos(entries_for_schema)
+    field_context = _augment_field_context_from_inpdata(mat_path, field_context, entries_for_schema)
 
     bookkeeping_keys = {
         "InpData",
@@ -2113,7 +2423,7 @@ def inspect_mat_fields(mat_path: str | Path) -> dict:
     }
 
     fields: list[dict] = []
-    for name, shape, mat_class in entries:
+    for name, shape, mat_class in entries_for_schema:
         if name.startswith("__") or name.startswith("viz_"):
             continue
         if name in _HIDDEN_VISUAL_FIELDS:
@@ -2189,6 +2499,8 @@ def _register_single_field(
         arr = np.asarray(arr, dtype=np.float64)
         if arr.size == 0:
             continue
+        if loc == "node":
+            arr = _reshape_nodal_field_if_flat(arr, vd)
         n_comp = _infer_component_count(arr, vd, loc)
         display_meta = _FIELD_DISPLAY_METADATA.get(key, {})
         vd.fields[key] = arr
@@ -2219,6 +2531,8 @@ def _register_multiframe_field(
         arr = np.asarray(arr, dtype=np.float64)
         if arr.ndim < 2 or arr.size == 0:
             continue
+        if loc == "node":
+            arr = _reshape_nodal_field_if_flat(arr, vd)
         n_frames = int(arr.shape[0])
         n_comp = _infer_component_count(arr[0], vd, loc)
         display_meta = _FIELD_DISPLAY_METADATA.get(key, {})
@@ -2285,16 +2599,103 @@ def _register_selected_extra_fields(raw: dict, vd: VizData, selected_fields: Opt
         fi = _infer_extra_field_info(key, arr, vd)
         if fi is None:
             continue
+        if fi.location == "node":
+            arr = _reshape_nodal_field_if_flat(arr, vd)
+            fi = FieldInfo(
+                key=fi.key,
+                label=fi.label,
+                n_components=_infer_component_count(arr[0] if fi.n_frames > 1 and arr.ndim >= 2 else arr, vd, "node"),
+                location=fi.location,
+                n_frames=int(arr.shape[0]) if fi.n_frames > 1 and arr.ndim >= 2 else fi.n_frames,
+                symbol=fi.symbol,
+                formula=fi.formula,
+                description=fi.description,
+            )
         vd.fields[key] = arr.astype(np.float64, copy=False)
         vd.field_info[key] = fi
 
 
 def _extract_frame_times(raw: dict) -> Optional[np.ndarray]:
-    for key in ("frame_time", "time_grid", "frame_load_scale"):
+    for key in ("validation_frame_time", "abaqus_validation_frame_time", "frame_time", "time_grid", "frame_load_scale"):
         arr = raw.get(key)
         if arr is not None:
             return _squeeze(np.asarray(arr, dtype=np.float64))
     return None
+
+
+_SHELL_DERIVED_SURFACE_STRAIN_KEYS = {
+    "frame_shell_layer_strain_SNEG",
+    "frame_shell_layer_strain_SPOS",
+}
+
+
+def _selected_field_dependencies(selected_fields: set[str]) -> set[str]:
+    deps: set[str] = set()
+    if selected_fields & _SHELL_DERIVED_SURFACE_STRAIN_KEYS:
+        deps.update({
+            "frame_gauss_strain",
+            "shell_section_z",
+            "shell_surface_section_indices",
+            "shell_surface_names",
+        })
+    if "rsdm_XS_path" in selected_fields:
+        deps.update({"rsdm_XS_cyc", "excess_stress_cycle", "field_excess_stress_cycle", "time_grid", "field_time_grid", "RSDMShakedownInput"})
+    if selected_fields & {"rsdms_XS_path", "rsdms_XS_path_SNEG", "rsdms_XS_path_SPOS"}:
+        deps.update({"ResultsSet", "ConfigInfo", "yield_ratio", "vertex_load_matrix", "shell_layer_stress_cases", "shell_section_z"})
+    return deps
+
+
+def _derive_shell_surface_strain(raw: Mapping[str, Any], surface: str) -> np.ndarray | None:
+    gen_raw = raw.get("frame_gauss_strain")
+    z_raw = raw.get("shell_section_z")
+    if gen_raw is None or z_raw is None:
+        return None
+    gen = np.asarray(gen_raw, dtype=np.float64)
+    if gen.ndim < 4 or gen.shape[-1] < 6:
+        return None
+    z_values = np.asarray(z_raw, dtype=np.float64).reshape(-1)
+    if z_values.size == 0:
+        return None
+    indices_raw = raw.get("shell_surface_section_indices")
+    if indices_raw is not None:
+        indices = np.asarray(indices_raw, dtype=np.int32).reshape(-1)
+    else:
+        indices = np.asarray([0, max(z_values.size - 1, 0)], dtype=np.int32)
+    if indices.size < 2:
+        indices = np.asarray([0, max(z_values.size - 1, 0)], dtype=np.int32)
+    surface_key = str(surface).upper()
+    idx = int(indices[0] if surface_key == "SNEG" else indices[1])
+    idx = max(0, min(idx, z_values.size - 1))
+    z = float(z_values[idx])
+    return np.asarray(gen[..., :3] + z * gen[..., 3:6], dtype=np.float64)
+
+
+def _register_shell_incremental_derived_fields(
+    raw: Mapping[str, Any],
+    vd: VizData,
+    selected_fields: Optional[set[str]],
+) -> None:
+    for surface in ("SNEG", "SPOS"):
+        key = f"frame_shell_layer_strain_{surface}"
+        if selected_fields is not None and key not in selected_fields:
+            continue
+        if key in vd.fields:
+            continue
+        arr = _derive_shell_surface_strain(raw, surface)
+        if arr is None or arr.size == 0:
+            continue
+        spec = _incremental_shell_display_spec(key)
+        vd.fields[key] = arr
+        vd.field_info[key] = FieldInfo(
+            key=key,
+            label=spec.get("label", f"E shell layer strain {surface} history"),
+            n_components=3,
+            location="gauss",
+            n_frames=int(arr.shape[0]) if arr.ndim >= 2 else 1,
+            symbol=spec.get("symbol", ""),
+            formula=spec.get("formula", ""),
+            description=spec.get("description", ""),
+        )
 
 
 _VALIDATION_SIDE_PREFIX = {
@@ -2304,87 +2705,167 @@ _VALIDATION_SIDE_PREFIX = {
 
 _VALIDATION_DISPLAY: dict[str, dict[str, Any]] = {
     "U": {
-        "label": "Displacement",
+        "label": "U displacement",
+        "display_key": "U",
         "family": "displacement",
         "tensor_kind": "vector",
         "location": "node",
-        "symbol": r"\mathbf{u}",
-        "formula": r"\mathbf{u}^{JAX}\;\leftrightarrow\;\mathbf{u}^{ODB}",
-        "description": "Nodal displacement used for JAX/ABAQUS ODB validation",
+        "symbol": r"\mathbf{u}(t)",
+        "formula": r"\mathbf{u}^{JAX}(t)\;\leftrightarrow\;\mathbf{u}^{ODB}(t)",
+        "description": "Nodal displacement history used for JAX/ABAQUS ODB validation.",
     },
     "NFORC": {
-        "label": "NFORC",
+        "label": "NFORC nodal force",
+        "display_key": "NFORC",
         "family": "force",
         "tensor_kind": "vector",
         "location": "node",
-        "symbol": r"\mathbf{NFORC}",
-        "formula": r"\mathbf{NFORC}=\int_{\Omega_e}\mathbf{B}^{T}\boldsymbol{\sigma}\,d\Omega",
-        "description": "Nodal force due to stress, compared against ABAQUS NFORC",
+        "symbol": r"\mathbf{NFORC}(t)",
+        "formula": r"\mathbf{NFORC}(t)=\int_{\Omega_e}\mathbf{B}^{T}\boldsymbol{\sigma}(t)\,d\Omega",
+        "description": "Nodal force due to stress, compared against ABAQUS NFORC output.",
     },
     "S": {
-        "label": "Stress",
+        "label": "S stress",
+        "display_key": "S",
         "family": "stress",
         "tensor_kind": "stress_voigt",
         "location": "gauss",
-        "symbol": r"\boldsymbol{\sigma}",
-        "formula": r"\boldsymbol{\sigma}^{JAX}\;\leftrightarrow\;\boldsymbol{\sigma}^{ODB}",
-        "description": "Gauss-point stress used for ODB validation",
+        "symbol": r"\boldsymbol{\sigma}(t)",
+        "formula": r"\boldsymbol{\sigma}^{JAX}(t)\;\leftrightarrow\;\boldsymbol{\sigma}^{ODB}(t)",
+        "description": "Gauss-point stress history used for ODB validation.",
     },
     "E": {
-        "label": "Strain",
+        "label": "E strain",
+        "display_key": "E",
         "family": "strain",
         "tensor_kind": "strain_voigt",
         "location": "gauss",
-        "symbol": r"\boldsymbol{\varepsilon}",
-        "formula": r"\boldsymbol{\varepsilon}^{JAX}\;\leftrightarrow\;\boldsymbol{\varepsilon}^{ODB}",
-        "description": "Gauss-point strain used for ODB validation",
+        "symbol": r"\boldsymbol{\varepsilon}(t)",
+        "formula": r"\boldsymbol{\varepsilon}^{JAX}(t)\;\leftrightarrow\;\boldsymbol{\varepsilon}^{ODB}(t)",
+        "description": "Gauss-point strain history used for ODB validation.",
     },
     "S_layer_SNEG": {
-        "label": "Layer stress SNEG",
+        "label": "S shell layer stress SNEG history",
+        "display_key": "S_SNEG",
         "family": "stress",
         "tensor_kind": "stress_voigt",
         "location": "gauss",
-        "symbol": r"\boldsymbol{\sigma}^{SNEG}",
-        "formula": r"\boldsymbol{\sigma}^{SNEG}=\boldsymbol{\sigma}(z_{SNEG})",
-        "description": "Shell layer Cauchy stress on the SNEG surface",
+        "symbol": r"\boldsymbol{\sigma}^{S}_{SNEG}(t)",
+        "formula": r"\boldsymbol{\sigma}^{S}_{SNEG}(t)=\boldsymbol{\sigma}^{S}(z_{SNEG},t)=[S_{11},S_{22},S_{12}]",
+        "description": "History of plane-stress Cauchy layer stress on the shell SNEG surface.",
     },
     "S_layer_SPOS": {
-        "label": "Layer stress SPOS",
+        "label": "S shell layer stress SPOS history",
+        "display_key": "S_SPOS",
         "family": "stress",
         "tensor_kind": "stress_voigt",
         "location": "gauss",
-        "symbol": r"\boldsymbol{\sigma}^{SPOS}",
-        "formula": r"\boldsymbol{\sigma}^{SPOS}=\boldsymbol{\sigma}(z_{SPOS})",
-        "description": "Shell layer Cauchy stress on the SPOS surface",
+        "symbol": r"\boldsymbol{\sigma}^{S}_{SPOS}(t)",
+        "formula": r"\boldsymbol{\sigma}^{S}_{SPOS}(t)=\boldsymbol{\sigma}^{S}(z_{SPOS},t)=[S_{11},S_{22},S_{12}]",
+        "description": "History of plane-stress Cauchy layer stress on the shell SPOS surface.",
     },
     "E_layer_SNEG": {
-        "label": "Layer strain SNEG",
+        "label": "E shell layer strain SNEG history",
+        "display_key": "E_SNEG",
         "family": "strain",
         "tensor_kind": "strain_voigt",
         "location": "gauss",
-        "symbol": r"\boldsymbol{\varepsilon}^{SNEG}",
-        "formula": r"\boldsymbol{\varepsilon}^{SNEG}=\boldsymbol{\varepsilon}(z_{SNEG})",
-        "description": "Shell layer strain on the SNEG surface",
+        "symbol": r"\boldsymbol{\varepsilon}^{S}_{SNEG}(t)",
+        "formula": r"\boldsymbol{\varepsilon}^{S}_{SNEG}(t)=\boldsymbol{\varepsilon}^{S}(z_{SNEG},t)=[E_{11},E_{22},E_{12}]",
+        "description": "History of shell layer strain on the SNEG surface.",
     },
     "E_layer_SPOS": {
-        "label": "Layer strain SPOS",
+        "label": "E shell layer strain SPOS history",
+        "display_key": "E_SPOS",
         "family": "strain",
         "tensor_kind": "strain_voigt",
         "location": "gauss",
-        "symbol": r"\boldsymbol{\varepsilon}^{SPOS}",
-        "formula": r"\boldsymbol{\varepsilon}^{SPOS}=\boldsymbol{\varepsilon}(z_{SPOS})",
-        "description": "Shell layer strain on the SPOS surface",
+        "symbol": r"\boldsymbol{\varepsilon}^{S}_{SPOS}(t)",
+        "formula": r"\boldsymbol{\varepsilon}^{S}_{SPOS}(t)=\boldsymbol{\varepsilon}^{S}(z_{SPOS},t)=[E_{11},E_{22},E_{12}]",
+        "description": "History of shell layer strain on the SPOS surface.",
+    },
+    "PE_layer_SNEG": {
+        "label": "PE shell layer plastic strain SNEG history",
+        "display_key": "PE_SNEG",
+        "family": "strain",
+        "tensor_kind": "strain_voigt",
+        "location": "gauss",
+        "symbol": r"\boldsymbol{\varepsilon}^{p,S}_{SNEG}(t)",
+        "formula": r"\boldsymbol{\varepsilon}^{p,S}_{SNEG}(t)=\boldsymbol{\varepsilon}^{p,S}(z_{SNEG},t)=[PE_{11},PE_{22},PE_{12},PE_{33}]",
+        "description": "History of shell layer plastic strain on the SNEG surface.",
+    },
+    "PE_layer_SPOS": {
+        "label": "PE shell layer plastic strain SPOS history",
+        "display_key": "PE_SPOS",
+        "family": "strain",
+        "tensor_kind": "strain_voigt",
+        "location": "gauss",
+        "symbol": r"\boldsymbol{\varepsilon}^{p,S}_{SPOS}(t)",
+        "formula": r"\boldsymbol{\varepsilon}^{p,S}_{SPOS}(t)=\boldsymbol{\varepsilon}^{p,S}(z_{SPOS},t)=[PE_{11},PE_{22},PE_{12},PE_{33}]",
+        "description": "History of shell layer plastic strain on the SPOS surface.",
     },
     "PEEQ": {
         "label": "PEEQ",
+        "display_key": "PEEQ",
         "family": "strain",
         "tensor_kind": "scalar",
         "location": "gauss",
-        "symbol": r"\bar{\varepsilon}^{p}",
-        "formula": r"\bar{\varepsilon}^{p}=\int\sqrt{\frac{2}{3}\dot{\boldsymbol{\varepsilon}}^p:\dot{\boldsymbol{\varepsilon}}^p}\,dt",
-        "description": "Equivalent plastic strain used for elastoplastic or DCA validation",
+        "symbol": r"\bar{\varepsilon}^{p}(t)",
+        "formula": r"\bar{\varepsilon}^{p}(t)=\int_0^t\sqrt{\frac{2}{3}\dot{\boldsymbol{\varepsilon}}^p:\dot{\boldsymbol{\varepsilon}}^p}\,d\tau",
+        "description": "Equivalent plastic strain used for elastoplastic or DCA validation.",
+    },
+    "PE": {
+        "label": "PE plastic strain",
+        "display_key": "PE",
+        "family": "strain",
+        "tensor_kind": "strain_voigt",
+        "location": "gauss",
+        "symbol": r"\boldsymbol{\varepsilon}^{p}(t)",
+        "formula": r"\boldsymbol{\varepsilon}^{p,JAX}(t)\;\leftrightarrow\;\boldsymbol{\varepsilon}^{p,ODB}(t)",
+        "description": "Gauss-point plastic strain history using the ABAQUS PE convention for solid elastoplastic or DCA validation.",
+    },
+    "PEEQ_Neg": {
+        "label": "PEEQ shell layer SNEG history",
+        "display_key": "PEEQ_Neg",
+        "family": "strain",
+        "tensor_kind": "scalar",
+        "location": "gauss",
+        "symbol": r"\bar{\varepsilon}^{p}_{SNEG}(t)",
+        "formula": r"\bar{\varepsilon}^{p}_{SNEG}(t)=\bar{\varepsilon}^{p}(z_{SNEG},t)",
+        "description": "History of equivalent plastic strain on the shell SNEG surface.",
+    },
+    "PEEQ_Pos": {
+        "label": "PEEQ shell layer SPOS history",
+        "display_key": "PEEQ_Pos",
+        "family": "strain",
+        "tensor_kind": "scalar",
+        "location": "gauss",
+        "symbol": r"\bar{\varepsilon}^{p}_{SPOS}(t)",
+        "formula": r"\bar{\varepsilon}^{p}_{SPOS}(t)=\bar{\varepsilon}^{p}(z_{SPOS},t)",
+        "description": "History of equivalent plastic strain on the shell SPOS surface.",
+    },
+    "PEEQ_Max": {
+        "label": "PEEQ through-thickness max history",
+        "display_key": "PEEQ_Max",
+        "family": "strain",
+        "tensor_kind": "scalar",
+        "location": "gauss",
+        "symbol": r"\bar{\varepsilon}^{p}_{\max}(t)",
+        "formula": r"\bar{\varepsilon}^{p}_{\max}(t)=\max_{z_k}\bar{\varepsilon}^{p}(z_k,t)",
+        "description": "History of the maximum equivalent plastic strain over the exposed shell section surfaces.",
     },
 }
+
+_VALIDATION_METADATA_KEYS = (
+    "validation_abaqus_surface_section_indices",
+    "validation_abaqus_source_surface_section_indices",
+    "validation_abaqus_surface_section_numbers",
+    "validation_abaqus_all_section_numbers",
+    "validation_abaqus_surface_section_names",
+    "validation_abaqus_section_count",
+    "validation_abaqus_all_section_count",
+    "validation_jax_section_count",
+)
 
 
 def _validation_is_shell(raw: Mapping[str, Any]) -> bool:
@@ -2392,8 +2873,110 @@ def _validation_is_shell(raw: Mapping[str, Any]) -> bool:
         return True
     if any(key in raw for key in ("abaqus_gen_section_force", "abaqus_gen_section_moment", "abaqus_layer_stress", "abaqus_layer_strain")):
         return True
+    if any(
+        key in raw
+        for key in (
+            "validation_jax_shell_layer_s",
+            "validation_abaqus_shell_layer_s",
+            "validation_jax_shell_layer_e",
+            "validation_abaqus_shell_layer_e",
+            "frame_shell_layer_stress_SNEG",
+            "frame_shell_layer_stress_SPOS",
+            "frame_shell_layer_plastic_strain_SNEG",
+            "frame_shell_layer_plastic_strain_SPOS",
+            "frame_shell_layer_peeq_SNEG",
+            "frame_shell_layer_peeq_SPOS",
+            "abaqus_frame_shell_layer_stress_SNEG",
+            "abaqus_frame_shell_layer_stress_SPOS",
+        )
+    ):
+        return True
     meta = _extract_metadata(dict(raw)) if isinstance(raw, dict) else {}
     return str(meta.get("family", "")).strip().lower() == "shell"
+
+
+def _validation_flat_ints(value: Any) -> list[int]:
+    if value is None:
+        return []
+    try:
+        arr = np.asarray(value).reshape(-1)
+    except Exception:
+        return []
+    out: list[int] = []
+    for item in arr:
+        try:
+            out.append(int(np.asarray(item).reshape(-1)[0]))
+        except Exception:
+            continue
+    return out
+
+
+def _validation_flat_strings(value: Any) -> list[str]:
+    if value is None:
+        return []
+    try:
+        arr = np.asarray(value, dtype=object).reshape(-1)
+    except Exception:
+        return []
+    out: list[str] = []
+    for item in arr:
+        cur = _unwrap_scalar(item)
+        if isinstance(cur, bytes):
+            text = cur.decode("utf-8", errors="ignore").strip()
+        else:
+            text = str(cur).strip()
+        if text:
+            out.append(text)
+    return out
+
+
+def _load_validation_display_metadata(mat_path: str | Path) -> dict[str, Any]:
+    import scipy.io as sio
+
+    try:
+        raw = sio.loadmat(
+            str(mat_path),
+            squeeze_me=False,
+            struct_as_record=False,
+            variable_names=["metadata", VALIDATION_RESULT_KEY, VALIDATION_PARAM_KEY],
+        )
+    except Exception:
+        return {}
+    return expand_public_mat_payload(raw)
+
+
+def _validation_shell_surface_note(raw: Mapping[str, Any]) -> str:
+    """Summarise shell surface extraction metadata without exposing extra fields."""
+    if not _validation_is_shell(raw):
+        return ""
+    names = _validation_flat_strings(raw.get("validation_abaqus_surface_section_names")) or ["SNEG", "SPOS"]
+    section_numbers = _validation_flat_ints(raw.get("validation_abaqus_surface_section_numbers"))
+    source_indices = _validation_flat_ints(raw.get("validation_abaqus_source_surface_section_indices"))
+    all_numbers = _validation_flat_ints(raw.get("validation_abaqus_all_section_numbers"))
+    surface_count = _validation_flat_ints(raw.get("validation_abaqus_section_count"))
+    all_count = _validation_flat_ints(raw.get("validation_abaqus_all_section_count"))
+    count_text = ""
+    if all_count:
+        count_text = f" of {all_count[0]} ALLSECTIONPTS"
+    elif all_numbers:
+        count_text = f" of {len(all_numbers)} ALLSECTIONPTS"
+    if section_numbers:
+        pairs = [
+            f"{name}=section {section_numbers[idx]}"
+            for idx, name in enumerate(names)
+            if idx < len(section_numbers)
+        ]
+        note = f"ABAQUS layer fields expose {', '.join(pairs)}"
+    elif surface_count:
+        note = f"ABAQUS layer fields expose {surface_count[0]} shell surfaces"
+    else:
+        note = f"ABAQUS layer fields expose {', '.join(names)} shell surfaces"
+    if source_indices:
+        idx_text = ", ".join(str(v) for v in source_indices)
+        note = f"{note}; source section positions {idx_text}{count_text}"
+    elif count_text:
+        note = f"{note}{count_text}"
+    return f"{note}. JAX fields use the same public SNEG/SPOS naming."
 
 
 def _validation_display_spec(raw: Mapping[str, Any], semantic: str, arr: Any = None) -> dict[str, Any]:
@@ -2409,32 +2992,50 @@ def _validation_display_spec(raw: Mapping[str, Any], semantic: str, arr: Any = N
         n_comp = int(spec.get("n_components", 1))
     if shell and semantic == "S":
         spec.update({
-            "label": "Shell generalized stress" if n_comp >= 6 else "Shell generalized membrane force",
-            "symbol": r"\mathbf{S}_{gen}",
-            "formula": r"\mathbf{S}_{gen}=[\mathbf{SF},\mathbf{SM}]",
-            "description": "Shell generalized stress resultants: membrane force SF and bending moment SM",
+            "label": "SGEN shell generalized stress history" if n_comp >= 6 else "SGEN shell membrane force history",
+            "display_key": "SGEN",
+            "symbol": r"\mathbf{S}_{gen}(t)",
+            "formula": r"\mathbf{S}_{gen}(t)=[\mathbf{SF}(t),\mathbf{SM}(t)]",
+            "description": "History of shell generalized stress resultants: SF membrane force and SM bending moment, compared with ABAQUS SF/SM.",
         })
     elif shell and semantic == "E":
         spec.update({
-            "label": "Shell generalized strain",
-            "symbol": r"\mathbf{E}_{gen}",
-            "formula": r"\mathbf{E}_{gen}=[\boldsymbol{\varepsilon},\boldsymbol{\kappa}]",
-            "description": "Shell generalized strain: membrane strain and curvature components",
+            "label": "EGEN shell generalized strain history",
+            "display_key": "EGEN",
+            "symbol": r"\mathbf{E}_{gen}(t)",
+            "formula": r"\mathbf{E}_{gen}(t)=[\boldsymbol{\varepsilon}_{m}(t),\boldsymbol{\kappa}(t)]",
+            "description": "History of shell generalized strain: membrane strain GE and curvature GK, compared with ABAQUS SE/SK.",
         })
     elif shell and semantic == "U":
         spec.update({
-            "label": "Shell displacement/rotation",
-            "symbol": r"\mathbf{q}",
-            "formula": r"\mathbf{q}=[u_1,u_2,u_3,\theta_1,\theta_2,\theta_3]",
-            "description": "Shell nodal translational and rotational degrees of freedom",
+            "label": "U shell displacement/rotation history",
+            "display_key": "U",
+            "symbol": r"\mathbf{q}(t)",
+            "formula": r"\mathbf{q}(t)=[U_1,U_2,U_3,UR_1,UR_2,UR_3]",
+            "description": "Shell nodal translational and rotational degrees of freedom.",
         })
     elif shell and semantic == "NFORC":
         spec.update({
-            "label": "Shell generalized NFORC",
-            "symbol": r"\mathbf{Q}",
-            "formula": r"\mathbf{Q}=[F_1,F_2,F_3,M_1,M_2,M_3]",
-            "description": "Shell nodal generalized force and moment due to stress",
+            "label": "NFORC shell generalized nodal force history",
+            "display_key": "NFORC",
+            "symbol": r"\mathbf{NFORC}(t)",
+            "formula": r"\mathbf{NFORC}(t)=[F_1,F_2,F_3,M_1,M_2,M_3]",
+            "description": "Shell nodal generalized force and moment compatible with ABAQUS NFORC1..6 output.",
         })
+    elif shell and semantic.startswith("PE_layer") and n_comp <= 3:
+        surface = "SNEG" if semantic.endswith("SNEG") else "SPOS"
+        spec.update({
+            "formula": rf"\boldsymbol{{\varepsilon}}^{{p,S}}_{{{surface}}}(t)=\boldsymbol{{\varepsilon}}^{{p,S}}(z_{{{surface}}},t)=[PE_{{11}},PE_{{22}},PE_{{12}}]",
+            "description": f"History of shell layer plastic strain components exposed for validation on the {surface} surface.",
+        })
+    if shell and (
+        semantic.startswith(("S_layer", "E_layer", "PE_layer"))
+        or semantic in {"PEEQ_Neg", "PEEQ_Pos", "PEEQ_Max"}
+    ):
+        note = _validation_shell_surface_note(raw)
+        if note:
+            desc = str(spec.get("description", "")).rstrip()
+            spec["description"] = f"{desc} {note}".strip()
     return spec
 
 
@@ -2473,7 +3074,19 @@ def _as_validation_flag(raw: Mapping[str, Any]) -> bool:
 
 
 def is_validation_mat(mat_path: str | Path) -> bool:
-    """Lightweight check for ODB validation MATs."""
+    """Lightweight check for ODB validation MATs.
+
+    Two on-disk layouts must be recognised:
+
+    * **legacy / flat** — ``validated_with_ODB`` lives at the top level
+      (most existing ``Examples/*/validation/*.mat`` were saved this way).
+    * **public / packed** — the flag was packed under
+      ``VALIDATION_RESULT_KEY`` (``ValidationResult``) struct.
+
+    The previous implementation only requested ``VALIDATION_RESULT_KEY``
+    from ``loadmat``, which silently misclassified all legacy MATs as
+    non-validation and broke the web auto-compare path.
+    """
     import scipy.io as sio
 
     try:
@@ -2481,16 +3094,20 @@ def is_validation_mat(mat_path: str | Path) -> bool:
             str(mat_path),
             squeeze_me=False,
             struct_as_record=False,
-            variable_names=["validated_with_ODB"],
+            variable_names=[VALIDATION_RESULT_KEY, "validated_with_ODB"],
         )
     except Exception:
         return False
+    raw = expand_public_mat_payload(raw)
     return _as_validation_flag(raw)
 
 
 def _whos_has_validation(entries: Sequence[tuple[str, tuple[int, ...], str]]) -> bool:
     names = _entry_names(entries)
-    return "validated_with_ODB" in names and any(name.startswith("abaqus_") for name in names)
+    return VALIDATION_RESULT_KEY in names and any(
+        name.startswith("abaqus_frame_")
+        for name in names
+    )
 
 
 def _validation_entries_by_name(entries: Sequence[tuple[str, tuple[int, ...], str]]) -> dict[str, tuple[int, ...]]:
@@ -2505,15 +3122,75 @@ def _validation_available_semantics_from_entries(entries: Sequence[tuple[str, tu
         if any(key in shapes for key in jax_keys) and any(key in shapes for key in aba_keys):
             out.append(semantic)
 
+    def has_pair(jax_keys: Sequence[str], aba_keys: Sequence[str]) -> bool:
+        return any(key in shapes for key in jax_keys) and any(key in shapes for key in aba_keys)
+
     add("U", ("solid_u_nodal", "shell_u_nodal", "u", "elastic_u", "frame_u"), ("abaqus_u_nodal", "abaqus_frame_u_nodal"))
     add("NFORC", ("solid_nforc_nodal", "shell_gen_internal_force", "internal_force", "frame_nforc", "frame_internal_force"), ("abaqus_nforc", "abaqus_frame_nforc"))
     add("S", ("gauss_stress", "frame_gauss_stress"), ("abaqus_gauss_stress", "abaqus_frame_gauss_stress", "abaqus_gen_section_force"))
     add("E", ("gauss_strain", "frame_gauss_strain"), ("abaqus_gauss_strain", "abaqus_frame_gauss_strain", "abaqus_gen_strain"))
-    add("S_layer_SNEG", ("shell_layer_stress",), ("abaqus_layer_stress",))
-    add("S_layer_SPOS", ("shell_layer_stress",), ("abaqus_layer_stress",))
-    add("E_layer_SNEG", ("shell_layer_strain",), ("abaqus_layer_strain",))
-    add("E_layer_SPOS", ("shell_layer_strain",), ("abaqus_layer_strain",))
-    add("PEEQ", ("gauss_peeq", "gauss_eqps", "frame_gauss_peeq"), ("abaqus_gauss_peeq", "abaqus_frame_gauss_peeq"))
+    add(
+        "S_layer_SNEG",
+        ("validation_jax_shell_layer_s", "frame_shell_layer_stress_SNEG", "frame_shell_layer_stress", "shell_layer_stress"),
+        ("validation_abaqus_shell_layer_s", "abaqus_frame_shell_layer_stress_SNEG", "abaqus_layer_stress"),
+    )
+    add(
+        "S_layer_SPOS",
+        ("validation_jax_shell_layer_s", "frame_shell_layer_stress_SPOS", "frame_shell_layer_stress", "shell_layer_stress"),
+        ("validation_abaqus_shell_layer_s", "abaqus_frame_shell_layer_stress_SPOS", "abaqus_layer_stress"),
+    )
+    add(
+        "E_layer_SNEG",
+        ("validation_jax_shell_layer_e", "frame_shell_layer_strain_SNEG", "frame_shell_layer_strain", "shell_layer_strain"),
+        ("validation_abaqus_shell_layer_e", "abaqus_frame_shell_layer_strain_SNEG", "abaqus_layer_strain"),
+    )
+    add(
+        "E_layer_SPOS",
+        ("validation_jax_shell_layer_e", "frame_shell_layer_strain_SPOS", "frame_shell_layer_strain", "shell_layer_strain"),
+        ("validation_abaqus_shell_layer_e", "abaqus_frame_shell_layer_strain_SPOS", "abaqus_layer_strain"),
+    )
+    add(
+        "PE_layer_SNEG",
+        ("validation_jax_shell_layer_pe", "frame_shell_layer_plastic_strain_SNEG", "frame_shell_layer_plastic_strain", "shell_layer_plastic_strain"),
+        ("validation_abaqus_shell_layer_pe", "abaqus_frame_shell_layer_plastic_strain_SNEG", "abaqus_layer_plastic_strain"),
+    )
+    add(
+        "PE_layer_SPOS",
+        ("validation_jax_shell_layer_pe", "frame_shell_layer_plastic_strain_SPOS", "frame_shell_layer_plastic_strain", "shell_layer_plastic_strain"),
+        ("validation_abaqus_shell_layer_pe", "abaqus_frame_shell_layer_plastic_strain_SPOS", "abaqus_layer_plastic_strain"),
+    )
+    shell_peeq_pair = has_pair(
+        ("validation_jax_shell_layer_peeq", "frame_shell_layer_peeq_SNEG", "frame_shell_layer_peeq_SPOS", "frame_shell_layer_peeq"),
+        ("validation_abaqus_shell_layer_peeq", "abaqus_frame_shell_layer_peeq_SNEG", "abaqus_frame_shell_layer_peeq_SPOS"),
+    )
+    solid_plastic_strain_pair = has_pair(
+        ("frame_gauss_plast_strain", "frame_gauss_plastic_strain", "gauss_plastic_strain"),
+        ("abaqus_frame_gauss_plast_strain", "abaqus_frame_gauss_plastic_strain", "abaqus_gauss_plastic_strain"),
+    )
+    if not shell_peeq_pair:
+        add(
+            "PEEQ",
+            ("validation_jax_shell_layer_peeq", "gauss_peeq", "gauss_eqps", "frame_gauss_peeq", "frame_shell_layer_peeq"),
+            ("validation_abaqus_shell_layer_peeq", "abaqus_gauss_peeq", "abaqus_frame_gauss_peeq"),
+        )
+    if solid_plastic_strain_pair:
+        out.append("PE")
+    add(
+        "PEEQ_Neg",
+        ("validation_jax_shell_layer_peeq", "frame_shell_layer_peeq_SNEG", "frame_shell_layer_peeq"),
+        ("validation_abaqus_shell_layer_peeq", "abaqus_frame_shell_layer_peeq_SNEG"),
+    )
+    add(
+        "PEEQ_Pos",
+        ("validation_jax_shell_layer_peeq", "frame_shell_layer_peeq_SPOS", "frame_shell_layer_peeq"),
+        ("validation_abaqus_shell_layer_peeq", "abaqus_frame_shell_layer_peeq_SPOS"),
+    )
+    if shell_peeq_pair:
+        add(
+            "PEEQ_Max",
+            ("validation_jax_shell_layer_peeq", "frame_gauss_peeq", "frame_shell_layer_peeq"),
+            ("validation_abaqus_shell_layer_peeq", "abaqus_gauss_peeq", "abaqus_frame_gauss_peeq"),
+        )
     return out
 
 
@@ -2523,7 +3200,11 @@ def _validation_inspect_shape_for_source(
     source_key: str,
 ) -> tuple[list[int], bool]:
     shape = list(shapes.get(source_key, ()))
-    is_frame = source_key.startswith("frame_")
+    is_frame = (
+        source_key.startswith("frame_")
+        or source_key.startswith("validation_jax_")
+        or source_key.startswith("validation_abaqus_")
+    )
     if semantic == "U" and source_key == "frame_u" and len(shape) == 2:
         if "abaqus_frame_u_nodal" in shapes and len(shapes["abaqus_frame_u_nodal"]) >= 3:
             return list(shapes["abaqus_frame_u_nodal"]), True
@@ -2544,17 +3225,23 @@ def _validation_inspect_shape_for_source(
 def inspect_validation_fields(mat_path: str | Path, entries: Sequence[tuple[str, tuple[int, ...], str]]) -> dict:
     """Return the JAX-side field catalog for an embedded ODB validation MAT."""
     shapes = _validation_entries_by_name(entries)
+    display_raw: dict[str, Any] = dict(shapes)
+    display_raw.update(_load_validation_display_metadata(mat_path))
     fields: list[dict[str, Any]] = []
     for semantic in _validation_available_semantics_from_entries(entries):
         key = _validation_virtual_key("jax", semantic)
         shape = []
         is_frame = False
         for source_key in (
-            "solid_u_nodal", "shell_u_nodal", "u", "elastic_u", "frame_u",
-            "gauss_stress", "frame_gauss_stress", "gauss_strain", "frame_gauss_strain",
-            "shell_layer_stress", "shell_layer_strain", "solid_nforc_nodal",
-            "shell_gen_internal_force", "internal_force", "frame_nforc", "frame_internal_force",
-            "gauss_peeq", "gauss_eqps", "frame_gauss_peeq",
+            "frame_u", "solid_u_nodal", "shell_u_nodal", "u", "elastic_u",
+            "frame_gauss_stress", "gauss_stress", "frame_gauss_strain", "gauss_strain",
+            "validation_jax_shell_layer_s", "frame_shell_layer_stress_SNEG", "frame_shell_layer_stress_SPOS", "frame_shell_layer_stress", "shell_layer_stress",
+            "validation_jax_shell_layer_e", "frame_shell_layer_strain_SNEG", "frame_shell_layer_strain_SPOS", "frame_shell_layer_strain", "shell_layer_strain",
+            "validation_jax_shell_layer_pe", "frame_shell_layer_plastic_strain_SNEG", "frame_shell_layer_plastic_strain_SPOS", "frame_shell_layer_plastic_strain", "shell_layer_plastic_strain",
+            "frame_gauss_plast_strain", "frame_gauss_plastic_strain", "gauss_plastic_strain",
+            "frame_nforc", "frame_internal_force", "solid_nforc_nodal",
+            "shell_gen_internal_force", "internal_force",
+            "validation_jax_shell_layer_peeq", "frame_gauss_peeq", "frame_shell_layer_peeq_SNEG", "frame_shell_layer_peeq_SPOS", "frame_shell_layer_peeq", "gauss_peeq", "gauss_eqps",
         ):
             if source_key in shapes:
                 if semantic == "U" and source_key not in {"solid_u_nodal", "shell_u_nodal", "u", "elastic_u", "frame_u"}:
@@ -2565,22 +3252,33 @@ def inspect_validation_fields(mat_path: str | Path, entries: Sequence[tuple[str,
                     continue
                 if semantic == "E" and source_key not in {"gauss_strain", "frame_gauss_strain"}:
                     continue
-                if semantic.startswith("S_layer") and source_key != "shell_layer_stress":
+                if semantic.startswith("S_layer") and source_key not in {"validation_jax_shell_layer_s", "frame_shell_layer_stress_SNEG", "frame_shell_layer_stress_SPOS", "frame_shell_layer_stress", "shell_layer_stress"}:
                     continue
-                if semantic.startswith("E_layer") and source_key != "shell_layer_strain":
+                if semantic.startswith("E_layer") and source_key not in {"validation_jax_shell_layer_e", "frame_shell_layer_strain_SNEG", "frame_shell_layer_strain_SPOS", "frame_shell_layer_strain", "shell_layer_strain"}:
                     continue
-                if semantic == "PEEQ" and source_key not in {"gauss_peeq", "gauss_eqps", "frame_gauss_peeq"}:
+                if semantic.startswith("PE_layer") and source_key not in {"validation_jax_shell_layer_pe", "frame_shell_layer_plastic_strain_SNEG", "frame_shell_layer_plastic_strain_SPOS", "frame_shell_layer_plastic_strain", "shell_layer_plastic_strain"}:
+                    continue
+                if semantic == "PE" and source_key not in {"frame_gauss_plast_strain", "frame_gauss_plastic_strain", "gauss_plastic_strain"}:
+                    continue
+                if semantic.startswith("PEEQ") and source_key not in {"validation_jax_shell_layer_peeq", "gauss_peeq", "gauss_eqps", "frame_gauss_peeq", "frame_shell_layer_peeq_SNEG", "frame_shell_layer_peeq_SPOS", "frame_shell_layer_peeq"}:
                     continue
                 shape, is_frame = _validation_inspect_shape_for_source(shapes, semantic, source_key)
                 break
-        spec = _validation_display_spec(shapes, semantic, shape)
+        spec = _validation_display_spec(display_raw, semantic, shape)
         n_components = 1 if spec["tensor_kind"] == "scalar" else (int(shape[-1]) if shape else 1)
-        if semantic.endswith(("SNEG", "SPOS")) and len(shape) >= 4:
-            shape = [shape[0], shape[1], shape[-1]]
-            n_components = int(shape[-1])
+        if semantic.endswith(("SNEG", "SPOS")) and len(shape) >= 5:
+            shape = [shape[0], shape[1], shape[2], shape[-1]]
+        if semantic in {"PEEQ", "PEEQ_Max", "PEEQ_Neg", "PEEQ_Pos"} and len(shape) >= 4:
+            if len(shape) >= 5 and int(shape[-1]) == 1:
+                shape = [shape[0], shape[1], shape[2]]
+            elif int(shape[-1]) in {1, 2, 3, 5}:
+                shape = [shape[0], shape[1], shape[2]]
+            n_components = 1
         fields.append({
             "key": key,
             "label": f"JAX {spec['label']}",
+            "display_key": str(spec.get("display_key", semantic)),
+            "semantic": semantic,
             "shape": shape,
             "mat_class": "validation",
             "location": spec["location"],
@@ -2588,7 +3286,7 @@ def inspect_validation_fields(mat_path: str | Path, entries: Sequence[tuple[str,
             "n_components": int(n_components),
             "family": spec["family"],
             "tensor_kind": spec["tensor_kind"],
-            "default_selected": semantic in {"U", "S", "E", "NFORC"},
+            "default_selected": semantic in {"U", "S", "E", "NFORC", "PEEQ", "PE"},
             "visualizable": True,
             "validation_side": "jax",
             "validation_pair_key": _validation_virtual_key("abaqus", semantic),
@@ -2617,18 +3315,22 @@ def _validation_required_raw_keys(selected_fields: Optional[set[str]], side: Opt
         semantics.update(_VALIDATION_DISPLAY)
     required = {
         "InpData",
+        FRAME_OUTPUTS_KEY,
+        SHELL_PARAM_KEY,
+        SOLID_PARAM_KEY,
+        VALIDATION_RESULT_KEY,
+        VALIDATION_PARAM_KEY,
         VIZ_MANIFEST_KEY,
         "metadata",
-        "validated_with_ODB",
-        "n_gauss_per_elem",
         "abaqus_node_coords",
         "abaqus_node_labels",
         "abaqus_elem_conn",
         "abaqus_elem_types",
         "abaqus_elem_labels",
-        "shell_section_z",
         "solid_elem_types",
-        "abaqus_validation_frame_time",
+        "frame_time",
+        "time_grid",
+        "frame_load_scale",
     }
     for semantic in semantics:
         if semantic == "U":
@@ -2640,11 +3342,35 @@ def _validation_required_raw_keys(selected_fields: Optional[set[str]], side: Opt
         elif semantic == "E":
             required.update({"gauss_strain", "frame_gauss_strain", "abaqus_gauss_strain", "abaqus_frame_gauss_strain", "abaqus_gen_strain", "abaqus_gen_curvature"})
         elif semantic.startswith("S_layer"):
-            required.update({"shell_layer_stress", "abaqus_layer_stress"})
+            required.update({"validation_jax_shell_layer_s", "frame_shell_layer_stress_SNEG", "frame_shell_layer_stress_SPOS", "frame_shell_layer_stress", "shell_layer_stress", "validation_abaqus_shell_layer_s", "abaqus_frame_shell_layer_stress_SNEG", "abaqus_frame_shell_layer_stress_SPOS", "abaqus_layer_stress"})
         elif semantic.startswith("E_layer"):
-            required.update({"shell_layer_strain", "abaqus_layer_strain"})
-        elif semantic == "PEEQ":
-            required.update({"gauss_peeq", "gauss_eqps", "frame_gauss_peeq", "abaqus_gauss_peeq", "abaqus_frame_gauss_peeq"})
+            required.update({"validation_jax_shell_layer_e", "frame_shell_layer_strain_SNEG", "frame_shell_layer_strain_SPOS", "frame_shell_layer_strain", "shell_layer_strain", "validation_abaqus_shell_layer_e", "abaqus_frame_shell_layer_strain_SNEG", "abaqus_frame_shell_layer_strain_SPOS", "abaqus_layer_strain"})
+        elif semantic.startswith("PE_layer"):
+            required.update({"validation_jax_shell_layer_pe", "frame_shell_layer_plastic_strain_SNEG", "frame_shell_layer_plastic_strain_SPOS", "frame_shell_layer_plastic_strain", "shell_layer_plastic_strain", "validation_abaqus_shell_layer_pe", "abaqus_frame_shell_layer_plastic_strain_SNEG", "abaqus_frame_shell_layer_plastic_strain_SPOS", "abaqus_layer_plastic_strain"})
+        elif semantic == "PE":
+            required.update({
+                "frame_gauss_plast_strain",
+                "frame_gauss_plastic_strain",
+                "gauss_plastic_strain",
+                "abaqus_frame_gauss_plast_strain",
+                "abaqus_frame_gauss_plastic_strain",
+                "abaqus_gauss_plastic_strain",
+            })
+        elif semantic.startswith("PEEQ"):
+            required.update({
+                "validation_jax_shell_layer_peeq",
+                "validation_abaqus_shell_layer_peeq",
+                "gauss_peeq",
+                "gauss_eqps",
+                "frame_gauss_peeq",
+                "frame_shell_layer_peeq_SNEG",
+                "frame_shell_layer_peeq_SPOS",
+                "frame_shell_layer_peeq",
+                "abaqus_gauss_peeq",
+                "abaqus_frame_gauss_peeq",
+                "abaqus_frame_shell_layer_peeq_SNEG",
+                "abaqus_frame_shell_layer_peeq_SPOS",
+            })
     return required
 
 
@@ -2813,9 +3539,45 @@ def _validation_plane_components(arr: np.ndarray) -> np.ndarray:
 
 def _validation_section_surface(arr: np.ndarray, surface: str) -> np.ndarray:
     values = np.asarray(arr, dtype=np.float64)
-    if values.ndim >= 4:
-        idx = 0 if surface.upper() == "SNEG" else values.shape[2] - 1
-        values = values[:, :, idx, :]
+    if values.ndim >= 3:
+        has_component_axis = values.ndim >= 4 and values.shape[-1] in {1, 3, 4, 6}
+        axis = values.ndim - 2 if has_component_axis else values.ndim - 1
+        idx = 0 if surface.upper() == "SNEG" else values.shape[axis] - 1
+        values = np.take(values, idx, axis=axis)
+    return values
+
+
+def _validation_direct_layer_key(side: str, semantic: str) -> Optional[str]:
+    prefix = _VALIDATION_SIDE_PREFIX.get(side)
+    if prefix is None:
+        return None
+    if semantic.startswith("S_layer"):
+        return f"{prefix}shell_layer_s"
+    if semantic.startswith("E_layer"):
+        return f"{prefix}shell_layer_e"
+    if semantic.startswith("PE_layer"):
+        return f"{prefix}shell_layer_pe"
+    if semantic.startswith("PEEQ"):
+        return f"{prefix}shell_layer_peeq"
+    return None
+
+
+def _validation_direct_field(raw: Mapping[str, Any], side: str, semantic: str) -> Optional[np.ndarray]:
+    key = _validation_direct_layer_key(side, semantic)
+    if key is None:
+        return None
+    arr = _as_float_array(raw.get(key), squeeze=True)
+    if arr is None:
+        return None
+    values = np.asarray(arr, dtype=np.float64)
+    if semantic.endswith("SNEG") or semantic == "PEEQ_Neg":
+        values = _validation_section_surface(values, "SNEG")
+    elif semantic.endswith("SPOS") or semantic == "PEEQ_Pos":
+        values = _validation_section_surface(values, "SPOS")
+    elif semantic in {"PEEQ", "PEEQ_Max"} and values.ndim >= 3:
+        has_component_axis = values.ndim >= 4 and values.shape[-1] in {1, 3, 4, 6}
+        axis = values.ndim - 2 if has_component_axis else values.ndim - 1
+        values = np.max(values, axis=axis)
     return values
 
 
@@ -2871,21 +3633,41 @@ def _validation_shell_gen_moment(sm: np.ndarray) -> np.ndarray:
 
 
 def _validation_raw_jax_field(raw: Mapping[str, Any], semantic: str) -> Optional[np.ndarray]:
+    direct = _validation_direct_field(raw, "jax", semantic)
+    if direct is not None:
+        return direct
     candidates: tuple[str, ...]
     if semantic == "U":
-        candidates = ("solid_u_nodal", "shell_u_nodal", "u", "elastic_u", "frame_u")
+        candidates = ("frame_u", "solid_u_nodal", "shell_u_nodal", "u", "elastic_u")
     elif semantic == "NFORC":
-        candidates = ("solid_nforc_nodal", "shell_gen_internal_force", "frame_nforc", "frame_internal_force", "internal_force")
+        candidates = ("frame_nforc", "frame_internal_force", "solid_nforc_nodal", "shell_gen_internal_force", "internal_force")
     elif semantic == "S":
-        candidates = ("gauss_stress", "frame_gauss_stress")
+        candidates = ("frame_gauss_stress", "gauss_stress")
     elif semantic == "E":
-        candidates = ("gauss_strain", "frame_gauss_strain")
+        candidates = ("frame_gauss_strain", "gauss_strain")
     elif semantic.startswith("S_layer"):
-        candidates = ("shell_layer_stress",)
+        surface_key = "SNEG" if semantic.endswith("SNEG") else "SPOS"
+        candidates = (f"frame_shell_layer_stress_{surface_key}", "frame_shell_layer_stress", "shell_layer_stress")
     elif semantic.startswith("E_layer"):
-        candidates = ("shell_layer_strain",)
+        surface_key = "SNEG" if semantic.endswith("SNEG") else "SPOS"
+        candidates = (f"frame_shell_layer_strain_{surface_key}", "frame_shell_layer_strain", "shell_layer_strain")
+    elif semantic.startswith("PE_layer"):
+        surface_key = "SNEG" if semantic.endswith("SNEG") else "SPOS"
+        candidates = (f"frame_shell_layer_plastic_strain_{surface_key}", "frame_shell_layer_plastic_strain", "shell_layer_plastic_strain")
+    elif semantic == "PE":
+        candidates = ("frame_gauss_plast_strain", "frame_gauss_plastic_strain", "gauss_plastic_strain")
+    elif semantic == "PEEQ_Neg":
+        candidates = ("frame_shell_layer_peeq_SNEG", "frame_shell_layer_peeq")
+    elif semantic == "PEEQ_Pos":
+        candidates = ("frame_shell_layer_peeq_SPOS", "frame_shell_layer_peeq")
     elif semantic == "PEEQ":
-        candidates = ("gauss_peeq", "gauss_eqps", "frame_gauss_peeq")
+        candidates = ("frame_gauss_peeq", "frame_shell_layer_peeq", "gauss_peeq", "gauss_eqps")
+    elif semantic == "PEEQ_Max":
+        if "frame_shell_layer_peeq_SNEG" in raw and "frame_shell_layer_peeq_SPOS" in raw:
+            neg = np.asarray(raw["frame_shell_layer_peeq_SNEG"], dtype=np.float64)
+            pos = np.asarray(raw["frame_shell_layer_peeq_SPOS"], dtype=np.float64)
+            return np.maximum(neg, pos)
+        candidates = ("frame_shell_layer_peeq",)
     else:
         candidates = ()
     for key in candidates:
@@ -2893,17 +3675,24 @@ def _validation_raw_jax_field(raw: Mapping[str, Any], semantic: str) -> Optional
             arr = np.asarray(raw[key], dtype=np.float64)
             if semantic in {"U", "NFORC"}:
                 arr = _validation_reshape_flat_nodal(raw, arr)
-            if semantic.endswith("SNEG"):
+            if (semantic.endswith("SNEG") and not key.endswith("_SNEG")) or (semantic == "PEEQ_Neg" and not key.endswith("_SNEG")):
                 arr = _validation_section_surface(arr, "SNEG")
-            elif semantic.endswith("SPOS"):
+            elif (semantic.endswith("SPOS") and not key.endswith("_SPOS")) or (semantic == "PEEQ_Pos" and not key.endswith("_SPOS")):
                 arr = _validation_section_surface(arr, "SPOS")
+            elif semantic in {"PEEQ", "PEEQ_Max"} and key == "frame_shell_layer_peeq":
+                has_component_axis = arr.ndim >= 4 and arr.shape[-1] in {1, 3, 4, 6}
+                axis = arr.ndim - 2 if has_component_axis else arr.ndim - 1
+                arr = np.max(arr, axis=axis)
             return arr
     return None
 
 
 def _validation_raw_abaqus_field(raw: Mapping[str, Any], semantic: str, vd: VizData) -> Optional[np.ndarray]:
     arr: Optional[np.ndarray] = None
-    if semantic == "U":
+    direct = _validation_direct_field(raw, "abaqus", semantic)
+    if direct is not None:
+        arr = direct
+    elif semantic == "U":
         arr = _as_float_array(raw.get("abaqus_frame_u_nodal"), squeeze=True)
         if arr is None:
             arr = _as_float_array(raw.get("abaqus_u_nodal"), squeeze=True)
@@ -2938,17 +3727,56 @@ def _validation_raw_abaqus_field(raw: Mapping[str, Any], semantic: str, vd: VizD
             if se is not None and sk is not None:
                 arr = np.concatenate([_validation_plane_components(se), _validation_shell_gen_moment(sk)], axis=-1)
     elif semantic.startswith("S_layer"):
-        direct = _as_float_array(raw.get("abaqus_layer_stress"), squeeze=True)
+        surface = "SNEG" if semantic.endswith("SNEG") else "SPOS"
+        direct = _as_float_array(raw.get(f"abaqus_frame_shell_layer_stress_{surface}"), squeeze=True)
         if direct is not None:
-            arr = _validation_section_surface(_validation_plane_components(direct), "SNEG" if semantic.endswith("SNEG") else "SPOS")
+            arr = _validation_plane_components(direct)
+        else:
+            direct = _as_float_array(raw.get("abaqus_layer_stress"), squeeze=True)
+            if direct is not None:
+                arr = _validation_section_surface(_validation_plane_components(direct), surface)
     elif semantic.startswith("E_layer"):
-        direct = _as_float_array(raw.get("abaqus_layer_strain"), squeeze=True)
+        surface = "SNEG" if semantic.endswith("SNEG") else "SPOS"
+        direct = _as_float_array(raw.get(f"abaqus_frame_shell_layer_strain_{surface}"), squeeze=True)
         if direct is not None:
-            arr = _validation_section_surface(_validation_plane_components(direct), "SNEG" if semantic.endswith("SNEG") else "SPOS")
-    elif semantic == "PEEQ":
-        arr = _as_float_array(raw.get("abaqus_frame_gauss_peeq"), squeeze=True)
+            arr = _validation_plane_components(direct)
+        else:
+            direct = _as_float_array(raw.get("abaqus_layer_strain"), squeeze=True)
+            if direct is not None:
+                arr = _validation_section_surface(_validation_plane_components(direct), surface)
+    elif semantic.startswith("PE_layer"):
+        surface = "SNEG" if semantic.endswith("SNEG") else "SPOS"
+        direct = _as_float_array(raw.get(f"abaqus_frame_shell_layer_plastic_strain_{surface}"), squeeze=True)
+        if direct is not None:
+            arr = _validation_plane_components(direct)
+        else:
+            direct = _as_float_array(raw.get("abaqus_layer_plastic_strain"), squeeze=True)
+            if direct is not None:
+                arr = _validation_section_surface(_validation_plane_components(direct), surface)
+    elif semantic == "PE":
+        arr = _as_float_array(raw.get("abaqus_frame_gauss_plast_strain"), squeeze=True)
         if arr is None:
-            arr = _as_float_array(raw.get("abaqus_gauss_peeq"), squeeze=True)
+            arr = _as_float_array(raw.get("abaqus_frame_gauss_plastic_strain"), squeeze=True)
+        if arr is None:
+            arr = _as_float_array(raw.get("abaqus_gauss_plastic_strain"), squeeze=True)
+    elif semantic == "PEEQ_Neg":
+        arr = _as_float_array(raw.get("abaqus_frame_shell_layer_peeq_SNEG"), squeeze=True)
+    elif semantic == "PEEQ_Pos":
+        arr = _as_float_array(raw.get("abaqus_frame_shell_layer_peeq_SPOS"), squeeze=True)
+    elif semantic in {"PEEQ", "PEEQ_Max"}:
+        if semantic == "PEEQ_Max":
+            neg = _as_float_array(raw.get("abaqus_frame_shell_layer_peeq_SNEG"), squeeze=True)
+            pos = _as_float_array(raw.get("abaqus_frame_shell_layer_peeq_SPOS"), squeeze=True)
+            if neg is not None and pos is not None:
+                arr = np.maximum(np.asarray(neg, dtype=np.float64), np.asarray(pos, dtype=np.float64))
+            elif "validation_abaqus_shell_layer_peeq" in raw or "abaqus_frame_shell_layer_peeq_SNEG" in raw or "abaqus_frame_shell_layer_peeq_SPOS" in raw:
+                arr = _as_float_array(raw.get("abaqus_frame_gauss_peeq"), squeeze=True)
+                if arr is None:
+                    arr = _as_float_array(raw.get("abaqus_gauss_peeq"), squeeze=True)
+        else:
+            arr = _as_float_array(raw.get("abaqus_frame_gauss_peeq"), squeeze=True)
+            if arr is None:
+                arr = _as_float_array(raw.get("abaqus_gauss_peeq"), squeeze=True)
     if arr is None:
         return None
     if semantic not in {"U", "NFORC"}:
@@ -3016,6 +3844,8 @@ def _register_validation_compare_fields(
         arr = np.asarray(arr, dtype=np.float64)
         if arr.size == 0:
             continue
+        if semantic not in {"U", "NFORC"}:
+            arr = _validation_reorder_elements_to_jax(raw, vd, arr)
         if side == "abaqus" and semantic != "PEEQ":
             jax_arr = _validation_raw_jax_field(raw, semantic)
             if jax_arr is not None and np.asarray(jax_arr).ndim > 0:
@@ -3147,49 +3977,21 @@ def _guess_inp_candidates(mat_path: Path, raw: dict) -> list[Path]:
 @lru_cache(maxsize=32)
 def _load_mesh_from_inp(inp_path: str) -> tuple[Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray]]:
     from jaxmech.io.abaqus.inp import parse_inp
+    from jaxmech.model.result import _mesh_to_viz_dict
 
     model = parse_inp(inp_path)
-    mesh = model.mesh
-    points = np.asarray(getattr(mesh, "nodes", None), dtype=np.float64)
-    if points.size == 0:
-        return None, None, None, None
-
-    all_cells: list[np.ndarray] = []
-    all_types: list[int] = []
-    all_ele_types: list[str] = []
-    for block in getattr(mesh, "blocks", []):
-        ele_key = str(getattr(block, "ele_type", "") or "").upper()
-        vtk_type = _ABAQUS_TO_VTK.get(ele_key)
-        if vtk_type is None:
-            cell_key = str(getattr(block, "cell_type", "") or "").lower()
-            if "hex" in cell_key:
-                vtk_type = 12
-            elif "tet" in cell_key:
-                vtk_type = 10
-            elif "wedge" in cell_key or "penta" in cell_key:
-                vtk_type = 13
-            elif "quad" in cell_key:
-                vtk_type = 9
-            elif "tri" in cell_key:
-                vtk_type = 5
-            else:
-                vtk_type = 12
-        conn = np.asarray(getattr(block, "connectivity", []), dtype=np.int64)
-        if conn.ndim != 2 or conn.size == 0:
-            continue
-        n_cells, npe = conn.shape
-        prefix = np.full((n_cells, 1), npe, dtype=np.int64)
-        all_cells.append(np.hstack([prefix, conn]))
-        all_types.extend([int(vtk_type)] * n_cells)
-        all_ele_types.extend([ele_key] * n_cells)
-
-    if not all_cells:
+    mesh_dict = _mesh_to_viz_dict(model.mesh)
+    points = mesh_dict.get("viz_points")
+    cells = mesh_dict.get("viz_cells")
+    cell_types = mesh_dict.get("viz_cell_types")
+    ele_types = mesh_dict.get("viz_cell_block_ele_types")
+    if points is None or cells is None or cell_types is None:
         return None, None, None, None
     return (
-        points,
-        np.concatenate(all_cells).reshape(-1).astype(np.int64),
-        np.asarray(all_types, dtype=np.int32),
-        np.asarray(all_ele_types, dtype=object),
+        np.asarray(points, dtype=np.float64),
+        np.asarray(cells, dtype=np.int64),
+        np.asarray(cell_types, dtype=np.int32),
+        np.asarray(ele_types, dtype=object) if ele_types is not None else None,
     )
 
 
@@ -3663,6 +4465,12 @@ _RSDMS_VERTEX_FRAME_KEYS = {
     "rsdms_FERROR",
 }
 
+_RSDMS_PATH_FRAME_KEYS = {
+    "rsdms_XS_path",
+    "rsdms_XS_path_SNEG",
+    "rsdms_XS_path_SPOS",
+}
+
 
 def _is_rsdms_field_key(key: str) -> bool:
     return str(key).startswith("rsdms_")
@@ -3670,6 +4478,589 @@ def _is_rsdms_field_key(key: str) -> bool:
 
 def _selection_has_rsdms_fields(selected: set[str]) -> bool:
     return any(_is_rsdms_field_key(key) for key in selected)
+
+
+def _selection_has_rsdm_fields(selected: set[str]) -> bool:
+    return any(str(key).startswith("rsdm_") for key in selected)
+
+
+def _rsdms_vertex_path_order(vertex_load_matrix: np.ndarray) -> list[int]:
+    vertices = np.asarray(vertex_load_matrix, dtype=np.float64)
+    if vertices.ndim != 2 or vertices.shape[1] == 0:
+        return []
+    n_cases, n_vert = int(vertices.shape[0]), int(vertices.shape[1])
+    if n_cases == 2 and n_vert == 4:
+        lo = np.min(vertices, axis=1)
+        hi = np.max(vertices, axis=1)
+        targets = [
+            np.array([lo[0], lo[1]], dtype=np.float64),
+            np.array([hi[0], lo[1]], dtype=np.float64),
+            np.array([hi[0], hi[1]], dtype=np.float64),
+            np.array([lo[0], hi[1]], dtype=np.float64),
+        ]
+        order: list[int] = []
+        used: set[int] = set()
+        for target in targets:
+            dist = np.linalg.norm(vertices.T - target.reshape(1, -1), axis=1)
+            for idx in np.argsort(dist):
+                idx = int(idx)
+                if idx not in used:
+                    order.append(idx)
+                    used.add(idx)
+                    break
+        if len(order) == 4:
+            return order + [order[0]]
+    if n_vert == 2:
+        return [0, 1, 0]
+    return list(range(n_vert)) + [0]
+
+
+def _shakedown_yield_stress(parts: Mapping[str, Any]) -> Optional[float]:
+    for key in ("yield_stress", "yield_values"):
+        value = parts.get(key)
+        arr = _as_float_array(value)
+        if arr is not None and arr.size:
+            candidate = float(arr.reshape(-1)[0])
+            if np.isfinite(candidate):
+                return candidate
+        text = _coerce_text(value)
+        if text:
+            numbers = re.findall(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?", text)
+            for item in numbers:
+                try:
+                    candidate = float(item)
+                except ValueError:
+                    continue
+                if np.isfinite(candidate):
+                    return candidate
+    return None
+
+
+def _rsdms_xs_path_frames_and_metadata(
+    parts: Mapping[str, Any],
+    *,
+    result_index: int,
+    result_count: int,
+) -> tuple[list[np.ndarray], list[str], list[dict[str, Any]]]:
+    ratio_raw = _as_float_array(parts.get("yield_ratio"), squeeze=False)
+    vertex_load = _shakedown_display_vertex_load_matrix(dict(parts))
+    if vertex_load is None:
+        vertex_load = _shakedown_vertex_load_matrix(dict(parts))
+    yield_stress = _shakedown_yield_stress(parts)
+    if ratio_raw is None or vertex_load is None or yield_stress is None:
+        return [], [], []
+
+    ratio = np.asarray(np.squeeze(ratio_raw), dtype=np.float64)
+    if ratio.ndim != 2 or ratio.size == 0:
+        return [], [], []
+    n_vert = int(vertex_load.shape[1])
+    if ratio.shape[1] != n_vert and ratio.shape[0] == n_vert:
+        ratio = ratio.T
+    if ratio.shape[1] != n_vert:
+        return [], [], []
+
+    order = _rsdms_vertex_path_order(vertex_load)
+    if len(order) < 2:
+        return [], [], []
+
+    row_label = _format_shakedown_result_label(dict(parts), result_index, result_count)
+    row_detail = _shakedown_result_detail(dict(parts), result_index, result_count)
+    n_dim = _shakedown_load_dim(dict(parts))
+    frames: list[np.ndarray] = []
+    labels: list[str] = []
+    details: list[dict[str, Any]] = []
+    n_paths = len(order) - 1
+    for path_idx, (start_idx, end_idx) in enumerate(zip(order[:-1], order[1:]), start=1):
+        if start_idx >= ratio.shape[1] or end_idx >= ratio.shape[1]:
+            continue
+        segment = np.maximum(np.maximum(ratio[:, start_idx], ratio[:, end_idx]) - 1.0, 0.0)
+        frames.append(segment * float(yield_stress))
+        start_text = _format_shakedown_vector(vertex_load[:, start_idx], n_dim)
+        end_text = _format_shakedown_vector(vertex_load[:, end_idx], n_dim)
+        path_label = f"Path {path_idx}/{n_paths}: load {start_text} -> {end_text}"
+        labels.append(f"{row_label} - {path_label}")
+        detail = _shakedown_frame_detail(row_detail)
+        detail["path"] = f"{path_idx}/{n_paths}"
+        detail["path_load"] = f"{start_text} -> {end_text}"
+        detail["full"] = f"{detail.get('full') or row_label} - {path_label}"
+        details.append(detail)
+    return frames, labels, details
+
+
+def _rsdms_xs_path_surface_frames_and_metadata(
+    parts: Mapping[str, Any],
+    *,
+    surface: str,
+    result_index: int,
+    result_count: int,
+) -> tuple[list[np.ndarray], list[str], list[dict[str, Any]]]:
+    ratio_surface = _shakedown_layer_yield_surface(dict(parts), surface)
+    vertex_load = _shakedown_display_vertex_load_matrix(dict(parts))
+    if vertex_load is None:
+        vertex_load = _shakedown_vertex_load_matrix(dict(parts))
+    yield_stress = _shakedown_yield_stress(parts)
+    if ratio_surface is None or vertex_load is None or yield_stress is None:
+        return [], [], []
+    ratio = np.asarray(ratio_surface, dtype=np.float64).T
+    if ratio.ndim != 2 or ratio.shape[1] != int(vertex_load.shape[1]):
+        return [], [], []
+    order = _rsdms_vertex_path_order(vertex_load)
+    if len(order) < 2:
+        return [], [], []
+
+    row_label = _format_shakedown_result_label(dict(parts), result_index, result_count)
+    row_detail = _shakedown_result_detail(dict(parts), result_index, result_count)
+    n_dim = _shakedown_load_dim(dict(parts))
+    frames: list[np.ndarray] = []
+    labels: list[str] = []
+    details: list[dict[str, Any]] = []
+    n_paths = len(order) - 1
+    surface_label = str(surface).upper()
+    for path_idx, (start_idx, end_idx) in enumerate(zip(order[:-1], order[1:]), start=1):
+        segment = np.maximum(np.maximum(ratio[:, start_idx], ratio[:, end_idx]) - 1.0, 0.0)
+        frames.append(segment * float(yield_stress))
+        start_text = _format_shakedown_vector(vertex_load[:, start_idx], n_dim)
+        end_text = _format_shakedown_vector(vertex_load[:, end_idx], n_dim)
+        path_label = f"Path {path_idx}/{n_paths}: load {start_text} -> {end_text}"
+        labels.append(f"{row_label} - {surface_label} - {path_label}")
+        detail = _shakedown_frame_detail(row_detail)
+        detail["path"] = f"{path_idx}/{n_paths}"
+        detail["path_load"] = f"{start_text} -> {end_text}"
+        detail["surface"] = surface_label
+        detail["full"] = f"{detail.get('full') or row_label} - {surface_label} - {path_label}"
+        details.append(detail)
+    return frames, labels, details
+
+
+def _register_rsdms_path_fields(raw: dict, vd: VizData, selected_fields: Optional[set[str]]) -> None:
+    result_parts = _shakedown_result_parts(raw)
+    result_parts = [parts for parts in result_parts if _shakedown_counts(parts)[2] > 0]
+    if not result_parts:
+        return
+
+    n_results = len(result_parts)
+    specs = [
+        ("rsdms_XS_path", "", "RSDM-S path effective excess stress"),
+        ("rsdms_XS_path_SNEG", "SNEG", "RSDM-S XS_path (inner/SNEG)"),
+        ("rsdms_XS_path_SPOS", "SPOS", "RSDM-S XS_path (outer/SPOS)"),
+    ]
+    for key, surface, label in specs:
+        if selected_fields is not None and key not in selected_fields:
+            continue
+        if key in vd.field_info:
+            continue
+        frames: list[np.ndarray] = []
+        labels: list[str] = []
+        details: list[dict[str, Any]] = []
+        for idx, parts in enumerate(result_parts):
+            if surface:
+                row_frames, row_labels, row_details = _rsdms_xs_path_surface_frames_and_metadata(
+                    parts,
+                    surface=surface,
+                    result_index=idx,
+                    result_count=n_results,
+                )
+            else:
+                row_frames, row_labels, row_details = _rsdms_xs_path_frames_and_metadata(
+                    parts,
+                    result_index=idx,
+                    result_count=n_results,
+                )
+            frames.extend(row_frames)
+            labels.extend(row_labels)
+            details.extend(row_details)
+        if not frames:
+            continue
+
+        data = np.stack(frames, axis=0)
+        display_meta = _FIELD_DISPLAY_METADATA[key]
+        vd.fields[key] = data
+        vd.field_info[key] = FieldInfo(
+            key=key,
+            label=label,
+            n_components=1,
+            location="gauss",
+            n_frames=int(data.shape[0]),
+            symbol=display_meta.get("symbol", ""),
+            formula=display_meta.get("formula", ""),
+            description=display_meta.get("description", ""),
+        )
+        by_field = vd.metadata.get("shakedown_frame_labels_by_field", {})
+        if not isinstance(by_field, dict):
+            by_field = {}
+        by_field[key] = labels
+        vd.metadata["shakedown_frame_labels_by_field"] = by_field
+
+        details_by_field = vd.metadata.get("shakedown_frame_details_by_field", {})
+        if not isinstance(details_by_field, dict):
+            details_by_field = {}
+        details_by_field[key] = details
+        vd.metadata["shakedown_frame_details_by_field"] = details_by_field
+
+
+def _stress_vm(stress: np.ndarray) -> np.ndarray:
+    arr = np.asarray(stress, dtype=np.float64)
+    if arr.ndim >= 1 and arr.shape[-1] >= 6:
+        s11, s22, s33, s12, s23, s13 = [arr[..., i] for i in range(6)]
+        return np.sqrt(0.5 * ((s11 - s22) ** 2 + (s22 - s33) ** 2 + (s33 - s11) ** 2) + 3.0 * (s12 ** 2 + s23 ** 2 + s13 ** 2))
+    if arr.ndim >= 1 and arr.shape[-1] >= 3:
+        s11, s22, s12 = arr[..., 0], arr[..., 1], arr[..., 2]
+        return np.sqrt(np.maximum(s11 ** 2 - s11 * s22 + s22 ** 2 + 3.0 * s12 ** 2, 0.0))
+    return np.asarray(arr, dtype=np.float64)
+
+
+def _rsdm_path_count(raw: Mapping[str, Any], n_time: int) -> int:
+    for value in (
+        _struct_get(raw.get("RSDMInput"), "n_vert"),
+        _struct_get(raw.get("RSDMShakedownInput"), "n_vert"),
+        _lookup_any(dict(raw), "NumVert"),
+    ):
+        arr = _as_float_array(value)
+        if arr is not None and arr.size:
+            candidate = int(arr.reshape(-1)[0])
+            if candidate > 0:
+                return max(1, min(candidate, int(n_time)))
+    return max(1, min(1, int(n_time)))
+
+
+def _rsdm_cycle_array(raw: Mapping[str, Any], name: str) -> Optional[np.ndarray]:
+    value = _lookup_any(dict(raw), name)
+    arr = _as_float_array(value, squeeze=False)
+    if arr is None:
+        return None
+    arr = np.asarray(arr, dtype=np.float64)
+    if arr.ndim >= 3:
+        return arr.reshape(arr.shape[0], -1, arr.shape[-1])
+    if arr.ndim == 2 and arr.shape[-1] in (3, 4, 6):
+        return arr.reshape(1, arr.shape[0], arr.shape[1])
+    return None
+
+
+def _rsdm_time_grid(raw: Mapping[str, Any], n_time: int) -> np.ndarray:
+    value = _lookup_any(dict(raw), "time_grid")
+    arr = _as_float_array(value)
+    if arr is not None and arr.size:
+        flat = np.asarray(arr, dtype=np.float64).reshape(-1)
+        if flat.size == n_time:
+            return flat
+    return np.linspace(0.0, 1.0, max(1, int(n_time)), dtype=np.float64)
+
+
+def _rsdm_integral_from_cycle(cycle: np.ndarray, raw: Mapping[str, Any]) -> np.ndarray:
+    n_time = int(cycle.shape[0])
+    if n_time <= 1:
+        return np.zeros_like(cycle[0])
+    time = _rsdm_time_grid(raw, n_time)
+    try:
+        return np.trapz(cycle, x=time, axis=0)
+    except Exception:
+        return np.mean(cycle, axis=0)
+
+
+def _register_field(
+    vd: VizData,
+    key: str,
+    data: np.ndarray,
+    *,
+    label: str,
+    location: str,
+    n_components: int,
+    n_frames: int = 1,
+) -> None:
+    display_meta = _FIELD_DISPLAY_METADATA.get(key, {})
+    vd.fields[key] = data
+    vd.field_info[key] = FieldInfo(
+        key=key,
+        label=label,
+        n_components=int(n_components),
+        location=location,
+        n_frames=int(n_frames),
+        symbol=display_meta.get("symbol", ""),
+        formula=display_meta.get("formula", ""),
+        description=display_meta.get("description", ""),
+    )
+
+
+def _register_rsdm_steady_fields(raw: dict, vd: VizData, selected_fields: Optional[set[str]]) -> None:
+    requested = {
+        "rsdm_S_res_a0",
+        "rsdm_S_res_cyc",
+        "rsdm_S_tot_cyc",
+        "rsdm_XS_cyc",
+        "rsdm_XS_int",
+        "rsdm_XS_norm",
+        "rsdm_XS_cmax",
+        "rsdm_XS_max",
+        "rsdm_XS_path",
+        "rsdm_XS_vmmax",
+        "rsdm_CLS_ratio",
+        "rsdm_CLS_map",
+    }
+    if selected_fields is not None:
+        requested.intersection_update(selected_fields)
+    if not requested:
+        return
+
+    residual_a0 = _as_float_array(_lookup_any(raw, "residual_stress_a0"), squeeze=False)
+    residual_cycle = _rsdm_cycle_array(raw, "residual_stress_cycle")
+    total_cycle = _rsdm_cycle_array(raw, "total_stress_cycle")
+    excess_cycle = _rsdm_cycle_array(raw, "excess_stress_cycle")
+
+    n_comp = 1
+    for arr in (residual_cycle, total_cycle, excess_cycle, residual_a0):
+        if arr is not None and arr.ndim >= 1:
+            n_comp = int(arr.shape[-1])
+            break
+
+    if "rsdm_S_res_a0" in requested and residual_a0 is not None:
+        arr = np.asarray(residual_a0, dtype=np.float64)
+        if arr.ndim >= 3:
+            arr = arr.reshape(-1, arr.shape[-1])
+        _register_field(vd, "rsdm_S_res_a0", arr, label="Residual stress mean", location="gauss", n_components=n_comp)
+    if "rsdm_S_res_cyc" in requested and residual_cycle is not None:
+        _register_field(vd, "rsdm_S_res_cyc", residual_cycle, label="Residual stress history", location="gauss", n_components=n_comp, n_frames=residual_cycle.shape[0])
+    if "rsdm_S_tot_cyc" in requested and total_cycle is not None:
+        _register_field(vd, "rsdm_S_tot_cyc", total_cycle, label="Total stress history", location="gauss", n_components=n_comp, n_frames=total_cycle.shape[0])
+    if "rsdm_XS_cyc" in requested and excess_cycle is not None:
+        _register_field(vd, "rsdm_XS_cyc", excess_cycle, label="Excess stress history", location="gauss", n_components=n_comp, n_frames=excess_cycle.shape[0])
+
+    if excess_cycle is None:
+        return
+
+    vm = _stress_vm(excess_cycle)
+    integral = _rsdm_integral_from_cycle(excess_cycle, raw)
+    alpha_norm = np.linalg.norm(integral, axis=-1)
+    cmax = np.max(np.abs(excess_cycle), axis=0)
+    xmax = np.max(np.abs(excess_cycle), axis=(0, 2))
+    vmmax = np.max(vm, axis=0)
+    denom = np.maximum(vmmax, 1.0e-30)
+    ratio = alpha_norm / denom
+    tol = _as_float_array(_lookup_any(raw, "classification_rel_tol"))
+    rel_tol = float(tol.reshape(-1)[0]) if tol is not None and tol.size else 1.0e-2
+    state_map = np.where(vmmax <= 1.0e-14, 0, np.where(ratio > rel_tol, 2, 1)).astype(np.float64)
+
+    derived_specs = [
+        ("rsdm_XS_int", integral, "Alpha integral", n_comp),
+        ("rsdm_XS_norm", alpha_norm.reshape(-1, 1), "Alpha norm", 1),
+        ("rsdm_XS_cmax", cmax, "Max |sigma_p component|", n_comp),
+        ("rsdm_XS_max", xmax.reshape(-1, 1), "Max |sigma_p|", 1),
+        ("rsdm_XS_vmmax", vmmax.reshape(-1, 1), "Max effective excess stress", 1),
+        ("rsdm_CLS_ratio", ratio.reshape(-1, 1), "Classification ratio", 1),
+        ("rsdm_CLS_map", state_map.reshape(-1, 1), "State classification", 1),
+    ]
+    for key, data, label, comps in derived_specs:
+        if key in requested:
+            _register_field(vd, key, data, label=label, location="gauss", n_components=comps)
+
+    if "rsdm_XS_path" in requested:
+        n_paths = _rsdm_path_count(raw, int(vm.shape[0]))
+        frames = [np.max(chunk, axis=0) for chunk in np.array_split(vm, n_paths) if chunk.size]
+        if frames:
+            data = np.stack(frames, axis=0)
+            _register_field(vd, "rsdm_XS_path", data, label="XS_path", location="gauss", n_components=1, n_frames=data.shape[0])
+            labels = [f"Path {idx}/{len(frames)}" for idx in range(1, len(frames) + 1)]
+            by_field = vd.metadata.get("shakedown_frame_labels_by_field", {})
+            if not isinstance(by_field, dict):
+                by_field = {}
+            by_field["rsdm_XS_path"] = labels
+            vd.metadata["shakedown_frame_labels_by_field"] = by_field
+
+
+def _rsdms_yield_stress_for_parts(parts: Mapping[str, Any]) -> float:
+    value = _shakedown_yield_stress(parts)
+    return float(value) if value is not None and np.isfinite(value) else 1.0
+
+
+def _rsdms_generalized_strain_component(parts: dict[str, Any], *, total: bool, suffix: str) -> Optional[np.ndarray]:
+    residual = _normalize_generalized_cases(parts.get("residual_generalized_strain"))
+    offset = 0 if str(suffix).upper() == "GE" else 3
+    if residual is None or residual.shape[1] < offset + 3:
+        return None
+    residual_comp = residual[:, offset:offset + 3, 0]
+    if not total:
+        return residual_comp
+    cases = _normalize_generalized_cases(parts.get("shell_generalized_strain_cases"))
+    vertex_load = _shakedown_vertex_load_matrix(parts)
+    alpha = _alpha_scalar(parts.get("objective_value"))
+    if cases is None or vertex_load is None or alpha is None:
+        return None
+    if cases.shape[0] != residual.shape[0] or cases.shape[1] < offset + 3 or cases.shape[2] != vertex_load.shape[0]:
+        return None
+    elastic_vertices = np.einsum("gci,iv->gcv", cases[:, offset:offset + 3, :], vertex_load)
+    return residual_comp[np.newaxis, :, :] + float(alpha) * np.moveaxis(elastic_vertices, 2, 0)
+
+
+def _register_rsdms_summary_fields(raw: dict, vd: VizData, selected_fields: Optional[set[str]]) -> None:
+    requested = {
+        "rsdms_S_res", "rsdms_S_tot", "rsdms_CInEQ", "rsdms_CEQ", "rsdms_XS_vmmax",
+        "rsdms_S_res_SNEG", "rsdms_S_res_SPOS", "rsdms_S_tot_SNEG", "rsdms_S_tot_SPOS",
+        "rsdms_E_res_SNEG", "rsdms_E_res_SPOS", "rsdms_E_tot_SNEG", "rsdms_E_tot_SPOS",
+        "rsdms_CInEQ_SNEG", "rsdms_CInEQ_SPOS",
+        "rsdms_SF_res", "rsdms_SM_res", "rsdms_SF_tot", "rsdms_SM_tot",
+        "rsdms_GE_res", "rsdms_GK_res", "rsdms_GE_tot", "rsdms_GK_tot",
+        "rsdms_NFORC", "rsdms_FERROR",
+    }
+    if selected_fields is not None:
+        requested.intersection_update(selected_fields)
+    if not requested:
+        return
+    result_parts = _shakedown_result_parts(raw)
+    result_parts = [parts for parts in result_parts if _shakedown_counts(parts)[2] > 0]
+    if not result_parts:
+        return
+
+    frames: dict[str, list[np.ndarray]] = {key: [] for key in requested}
+    for parts in result_parts:
+        if not _shakedown_is_shell_layer(parts):
+            residual = _as_float_array(parts.get("residual_stress"))
+            stress_cases = _shakedown_stress_cases(parts)
+            vertex_load = _shakedown_vertex_load_matrix(parts)
+            alpha = _alpha_scalar(parts.get("objective_value"))
+            if "rsdms_S_res" in requested and residual is not None and residual.ndim == 2:
+                frames["rsdms_S_res"].append(residual)
+            if (
+                "rsdms_S_tot" in requested and residual is not None and stress_cases is not None
+                and vertex_load is not None and alpha is not None and stress_cases.shape[2] == vertex_load.shape[0]
+            ):
+                elastic_vertices = np.einsum("gsi,iv->gsv", stress_cases, vertex_load)
+                total = residual[np.newaxis, :, :] + float(alpha) * np.moveaxis(elastic_vertices, 2, 0)
+                frames["rsdms_S_tot"].extend(total[i] for i in range(total.shape[0]))
+            ratio_frames = _shakedown_yield_ratio_frames(parts)
+            if ratio_frames is not None:
+                violation = np.maximum(ratio_frames - 1.0, 0.0)
+                if "rsdms_CInEQ" in requested:
+                    frames["rsdms_CInEQ"].extend(violation[i] for i in range(violation.shape[0]))
+                if "rsdms_XS_vmmax" in requested:
+                    frames["rsdms_XS_vmmax"].append(np.max(violation, axis=0) * _rsdms_yield_stress_for_parts(parts))
+            eq = _as_float_array(parts.get("equilibrium_residual"))
+            if "rsdms_CEQ" in requested and eq is not None:
+                n_nodes, n_dof = _shakedown_equilibrium_node_shape(parts)
+                if n_nodes > 0:
+                    frames["rsdms_CEQ"].append(
+                        _scatter_free_vector_to_nodes(eq.reshape(-1), parts.get("free_dofs"), n_nodes=n_nodes, ndof_per_node=n_dof)
+                    )
+            continue
+
+        for surface in ("SNEG", "SPOS"):
+            residual_surface = _shakedown_layer_residual_surface(parts, surface)
+            total_surface = _shakedown_layer_total_surface(parts, surface)
+            yield_surface = _shakedown_layer_yield_surface(parts, surface)
+            for key, value in (
+                (f"rsdms_S_res_{surface}", residual_surface),
+                (f"rsdms_S_tot_{surface}", total_surface),
+            ):
+                if key in requested and value is not None:
+                    frames[key].extend(value[i] for i in range(value.shape[0])) if value.ndim == 3 else frames[key].append(value)
+            if f"rsdms_CInEQ_{surface}" in requested and yield_surface is not None:
+                violation = np.maximum(yield_surface - 1.0, 0.0)
+                frames[f"rsdms_CInEQ_{surface}"].extend(violation[i] for i in range(violation.shape[0]))
+        for suffix in ("SF", "SM"):
+            residual_gen = _shakedown_generalized_component(parts, total=False, suffix=suffix)
+            total_gen = _shakedown_generalized_component(parts, total=True, suffix=suffix)
+            if f"rsdms_{suffix}_res" in requested and residual_gen is not None:
+                frames[f"rsdms_{suffix}_res"].append(residual_gen)
+            if f"rsdms_{suffix}_tot" in requested and total_gen is not None:
+                frames[f"rsdms_{suffix}_tot"].extend(total_gen[i] for i in range(total_gen.shape[0]))
+        for suffix in ("GE", "GK"):
+            residual_strain = _rsdms_generalized_strain_component(parts, total=False, suffix=suffix)
+            total_strain = _rsdms_generalized_strain_component(parts, total=True, suffix=suffix)
+            if f"rsdms_{suffix}_res" in requested and residual_strain is not None:
+                frames[f"rsdms_{suffix}_res"].append(residual_strain)
+            if f"rsdms_{suffix}_tot" in requested and total_strain is not None:
+                frames[f"rsdms_{suffix}_tot"].extend(total_strain[i] for i in range(total_strain.shape[0]))
+        for key, part_key in (("rsdms_NFORC", "shell_nforc"), ("rsdms_FERROR", "shell_force_error")):
+            arr = _as_float_array(parts.get(part_key), squeeze=False)
+            if key in requested and arr is not None:
+                arr = np.squeeze(np.asarray(arr, dtype=np.float64))
+                if arr.ndim >= 3:
+                    frames[key].extend(arr[i] for i in range(arr.shape[0]))
+                elif arr.ndim == 2:
+                    frames[key].append(arr)
+
+    labels: dict[str, tuple[str, str, int]] = {
+        "rsdms_S_res": ("RSDM-S residual stress", "gauss", 6),
+        "rsdms_S_tot": ("RSDM-S total stress", "gauss", 6),
+        "rsdms_CInEQ": ("RSDM-S CInEQ", "gauss", 1),
+        "rsdms_CEQ": ("RSDM-S CEQ", "node", 3),
+        "rsdms_XS_vmmax": ("RSDM-S max effective excess stress", "gauss", 1),
+        "rsdms_NFORC": ("RSDM-S NFORC (f_int+f_drill)", "node", 6),
+        "rsdms_FERROR": ("RSDM-S FERROR", "node", 6),
+    }
+    for surface, label_suffix in (("SNEG", "inner/SNEG"), ("SPOS", "outer/SPOS")):
+        labels.update({
+            f"rsdms_S_res_{surface}": (f"RSDM-S S residual ({label_suffix})", "gauss", 3),
+            f"rsdms_S_tot_{surface}": (f"RSDM-S S total ({label_suffix})", "gauss", 3),
+            f"rsdms_E_res_{surface}": (f"RSDM-S E residual-equivalent ({label_suffix})", "gauss", 3),
+            f"rsdms_E_tot_{surface}": (f"RSDM-S E total ({label_suffix})", "gauss", 3),
+            f"rsdms_CInEQ_{surface}": (f"RSDM-S CInEQ ({label_suffix})", "gauss", 1),
+        })
+    labels.update({
+        "rsdms_SF_res": ("RSDM-S SF residual", "gauss", 3),
+        "rsdms_SM_res": ("RSDM-S SM residual", "gauss", 3),
+        "rsdms_SF_tot": ("RSDM-S SF total", "gauss", 3),
+        "rsdms_SM_tot": ("RSDM-S SM total", "gauss", 3),
+        "rsdms_GE_res": ("RSDM-S GE residual-equivalent", "gauss", 3),
+        "rsdms_GK_res": ("RSDM-S GK residual-equivalent", "gauss", 3),
+        "rsdms_GE_tot": ("RSDM-S GE total", "gauss", 3),
+        "rsdms_GK_tot": ("RSDM-S GK total", "gauss", 3),
+    })
+    for key, items in frames.items():
+        if not items:
+            continue
+        data = np.stack(items, axis=0) if len(items) > 1 else items[0]
+        n_frames = int(data.shape[0]) if data.ndim >= 3 else 1
+        label, loc, fallback_comps = labels.get(key, (key, "gauss", 1))
+        comps = int(data.shape[-1]) if data.ndim >= 2 and data.shape[-1] in (1, 2, 3, 4, 6) else fallback_comps
+        _register_field(vd, key, data, label=label, location=loc, n_components=comps, n_frames=n_frames)
+
+
+def _register_rsdm_path_field(raw: dict, vd: VizData, selected_fields: Optional[set[str]]) -> None:
+    key = "rsdm_XS_path"
+    if selected_fields is not None and key not in selected_fields:
+        return
+    if key in vd.field_info:
+        return
+    cycle = None
+    for source_key in ("rsdm_XS_cyc", "excess_stress_cycle", "field_excess_stress_cycle"):
+        if raw.get(source_key) is not None:
+            cycle = raw.get(source_key)
+            break
+    if cycle is None:
+        return
+    arr = np.asarray(cycle, dtype=np.float64)
+    if arr.size == 0:
+        return
+    if arr.ndim >= 3:
+        flat = arr.reshape(arr.shape[0], -1, arr.shape[-1])
+        vm = _stress_vm(flat)
+    elif arr.ndim == 2:
+        vm = arr
+    else:
+        return
+    n_time = int(vm.shape[0])
+    n_paths = _rsdm_path_count(raw, n_time)
+    frames = [np.max(chunk, axis=0) for chunk in np.array_split(vm, n_paths) if chunk.size]
+    if not frames:
+        return
+    data = np.stack(frames, axis=0)
+    display_meta = _FIELD_DISPLAY_METADATA[key]
+    vd.fields[key] = data
+    vd.field_info[key] = FieldInfo(
+        key=key,
+        label="XS_path",
+        n_components=1,
+        location="gauss",
+        n_frames=int(data.shape[0]),
+        symbol=display_meta.get("symbol", ""),
+        formula=display_meta.get("formula", ""),
+        description=display_meta.get("description", ""),
+    )
+    labels = [f"Path {idx}/{len(frames)}" for idx in range(1, len(frames) + 1)]
+    by_field = vd.metadata.get("shakedown_frame_labels_by_field", {})
+    if not isinstance(by_field, dict):
+        by_field = {}
+    by_field[key] = labels
+    vd.metadata["shakedown_frame_labels_by_field"] = by_field
 
 
 def _enrich_rsdms_summary_frame_metadata(raw: dict, vd: VizData) -> None:
@@ -3689,12 +5080,34 @@ def _enrich_rsdms_summary_frame_metadata(raw: dict, vd: VizData) -> None:
 
     for key in rsdms_keys:
         fi = vd.field_info.get(key)
-        if fi is None or int(fi.n_frames) <= 1:
+        if fi is None:
             continue
 
         labels: list[str] = []
         details: list[dict[str, Any]] = []
-        if key in _RSDMS_VERTEX_FRAME_KEYS:
+        if key in _RSDMS_PATH_FRAME_KEYS:
+            surface = ""
+            if key.endswith("_SNEG"):
+                surface = "SNEG"
+            elif key.endswith("_SPOS"):
+                surface = "SPOS"
+            for idx, parts in enumerate(result_parts):
+                if surface:
+                    _frames, row_labels, row_details = _rsdms_xs_path_surface_frames_and_metadata(
+                        parts,
+                        surface=surface,
+                        result_index=idx,
+                        result_count=n_results,
+                    )
+                else:
+                    _frames, row_labels, row_details = _rsdms_xs_path_frames_and_metadata(
+                        parts,
+                        result_index=idx,
+                        result_count=n_results,
+                    )
+                labels.extend(row_labels)
+                details.extend(row_details)
+        elif key in _RSDMS_VERTEX_FRAME_KEYS:
             field_data = vd.fields.get(key)
             frame_order: list[int] = []
             for idx, parts in enumerate(result_parts):
@@ -4311,8 +5724,12 @@ def load_viz_data(
     if validation_side_key:
         variable_names = sorted(_validation_required_raw_keys(selected_set, validation_side_key))
     elif selected_set:
+        dependency_keys = _selected_field_dependencies(selected_set)
         required = {
             "InpData",
+            FRAME_OUTPUTS_KEY,
+            SHELL_PARAM_KEY,
+            SOLID_PARAM_KEY,
             VIZ_MANIFEST_KEY,
             "metadata",
             "n_gauss_per_elem",
@@ -4324,11 +5741,18 @@ def load_viz_data(
             "viz_cell_types",
             "viz_cell_block_ele_types",
         }
-        if any(key in _SHAKEDOWN_FIELD_SPECS for key in selected_set) or _selection_has_rsdms_fields(selected_set):
+        if (
+            any(key in _SHAKEDOWN_FIELD_SPECS for key in selected_set)
+            or _selection_has_rsdms_fields(selected_set)
+            or _selection_has_rsdm_fields(selected_set)
+        ):
             required.update({
                 "ElasticInputSet",
                 "ResultsSet",
                 "ConfigInfo",
+                "RSDMResult",
+                "RSDMInput",
+                SHELL_PARAM_KEY,
                 "gauss_coords",
                 "gauss_vols",
                 "gauss_stress_cases",
@@ -4363,13 +5787,21 @@ def load_viz_data(
                 "RSDMShakedownTrace",
                 "RSDMShakedownInput",
             })
-        variable_names = sorted(selected_set | required)
-    raw = sio.loadmat(
+        variable_names = sorted(selected_set | required | dependency_keys)
+        if any(
+            key.startswith("frame_") or key.startswith("abaqus_frame_")
+            for key in selected_set | dependency_keys
+        ):
+            variable_names = sorted(set(variable_names) | {FRAME_OUTPUTS_KEY, SOLID_PARAM_KEY})
+        if any(key.startswith("shell_") or key == "n_generalized_str" for key in selected_set | dependency_keys):
+            variable_names = sorted(set(variable_names) | {SHELL_PARAM_KEY})
+    raw_loaded = sio.loadmat(
         str(mat_path),
         squeeze_me=False,
         struct_as_record=True,
         variable_names=variable_names,
     )
+    raw = expand_public_mat_payload(raw_loaded)
     manifest = extract_viz_manifest(raw)
     if manifest is None and selected_set:
         try:
@@ -4378,7 +5810,7 @@ def load_viz_data(
             manifest = None
     if _raw_is_rsdm_shakedown(raw, manifest):
         manifest = _filter_rsdm_shakedown_manifest(manifest)
-    manifest = _normalize_manifest_for_reader(manifest)
+    manifest = _normalize_manifest_for_reader(manifest, raw.keys())
     if validation_side_key and _as_validation_flag(raw):
         manifest = None
     if manifest is not None:
@@ -4435,7 +5867,11 @@ def load_viz_data(
     else:
         _discover_fields(raw, vd, field_selection)
         _register_selected_extra_fields(raw, vd, field_selection)
+        _register_shell_incremental_derived_fields(raw, vd, field_selection)
         _register_shakedown_fields(raw, vd, field_selection)
+        _register_rsdm_steady_fields(raw, vd, field_selection)
+        _register_rsdms_summary_fields(raw, vd, field_selection)
+        _register_rsdms_path_fields(raw, vd, field_selection)
         _apply_manifest_field_info(vd, manifest, field_selection)
 
     # --- frame times ---

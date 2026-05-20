@@ -70,6 +70,7 @@ class SetLegendRequest(BaseModel):
     vmin: Optional[float] = None
     vmax: Optional[float] = None
     cmap: Optional[str] = None
+    font_pt: Optional[int] = None
     slot: str = "a"
 
 
@@ -94,6 +95,10 @@ class SyncCameraRequest(BaseModel):
     enabled: bool
 
 
+class SyncDisplayRequest(BaseModel):
+    enabled: bool
+
+
 class ShowEdgesRequest(BaseModel):
     show: bool
     slot: str = "a"
@@ -113,6 +118,22 @@ class DiffRequest(BaseModel):
     output_mat: bool = False
 
 
+class ProbeRequest(BaseModel):
+    """REST debug entry for ``VizScene.pick``.
+
+    The interactive (mousemove) probe runs over the WebSocket because
+    every hover dispatches a fresh pick that needs ``req_id`` ordering
+    to support last-write-wins. This REST shape is mostly used by the
+    headless ``temp/viz_probe`` verification harness.
+    """
+
+    slot: str = "a"
+    x: int
+    y: int
+    mode: str = "node"  # 'node' or 'element'
+    include_frames: bool = False
+
+
 # ── REST endpoints ───────────────────────────────────────────────────
 
 @router.post("/load")
@@ -129,6 +150,16 @@ async def load_mat(req: LoadRequest):
                 await _close_slot_ws("b", reason="Scene reloaded")
                 scene_a = pair.get("scene_a") or {}
                 return {"ok": True, **scene_a, **pair}
+        # If we were previously locked into a validation A/B pair and the user
+        # is now loading a regular (non-validation) MAT into A, exit compare
+        # mode and tear down scene B as well — keeping the stale validation B
+        # alongside an unrelated A would be visually misleading because the
+        # two scenes no longer share any meaningful field correspondence.
+        unlocked_validation = False
+        if req.slot == "a" and session.compare_locked:
+            session.close_b(force=True)
+            await _close_slot_ws("b", reason="Validation cleared")
+            unlocked_validation = True
         if req.slot == "b":
             info = session.load_b(str(path), selected_fields=req.selected_fields)
         else:
@@ -136,7 +167,18 @@ async def load_mat(req: LoadRequest):
         await _close_slot_ws(req.slot, reason="Scene reloaded")
     except Exception as exc:
         raise HTTPException(400, f"Failed to load: {exc}")
-    return {"ok": True, **info}
+    payload = {
+        "ok": True,
+        **info,
+        # Always surface session-level compare flags so the frontend can
+        # tear down B when validation is implicitly exited via a slot-A
+        # reload.
+        "compare_mode": session.compare_mode,
+        "compare_locked": session.compare_locked,
+    }
+    if unlocked_validation:
+        payload["unlocked_validation"] = True
+    return payload
 
 
 @router.post("/inspect")
@@ -179,6 +221,8 @@ async def set_legend(req: SetLegendRequest):
         scene.set_clim(req.vmin, req.vmax)
     if req.cmap is not None:
         scene.set_colormap(req.cmap)
+    if req.font_pt is not None:
+        scene.set_legend_font_pt(int(req.font_pt))
     return {"ok": True, **scene.info}
 
 
@@ -247,11 +291,25 @@ async def set_compare(req: CompareRequest):
 
 @router.post("/sync-camera")
 async def sync_camera(req: SyncCameraRequest):
+    """Back-compat alias for ``/sync-display`` (older clients)."""
     session = _get_session()
-    session.set_sync_camera(req.enabled)
+    session.set_sync_display(req.enabled)
     if req.enabled and session.compare_mode:
-        await _push_peer_frame("a")
-    return {"ok": True, "sync_camera": session.sync_camera}
+        await _push_slot_state("b", render=True)
+    return {"ok": True, "sync_display": session.sync_display, "sync_camera": session.sync_display}
+
+
+@router.post("/sync-display")
+async def sync_display(req: SyncDisplayRequest):
+    """Toggle A→B view mirroring (camera, clip)."""
+    session = _get_session()
+    session.set_sync_display(req.enabled)
+    if req.enabled and session.compare_mode:
+        # Push the freshly mirrored state to B's WebSocket immediately so
+        # the GUI reflects the slaved view without waiting for the next
+        # user interaction.
+        await _push_slot_state("b", render=True)
+    return {"ok": True, "sync_display": session.sync_display}
 
 
 @router.get("/info")
@@ -369,6 +427,27 @@ async def diff_boxplot():
         raise HTTPException(400, f"Failed to read Diff: {exc}")
 
 
+@router.post("/probe")
+async def probe(req: ProbeRequest):
+    """Pick a point or cell at the given viewport pixel.
+
+    Thin wrapper around :meth:`VizScene.pick` for headless testing.
+    Returns ``{"ok": True, "result": ...}`` where ``result`` is either
+    the probe dict (see ``VizScene.pick`` docstring) or ``None`` on a
+    background hit / mode-field mismatch.
+    """
+    scene = _get_session().get_scene(req.slot)
+    if scene is None:
+        raise HTTPException(400, "No scene loaded in this slot.")
+    result = scene.pick(
+        int(req.x),
+        int(req.y),
+        mode=str(req.mode or "node"),
+        include_frames=bool(req.include_frames),
+    )
+    return {"ok": True, "result": result}
+
+
 @router.post("/diff-mat")
 async def diff_mat():
     """Download the currently registered Diff field as a MAT file."""
@@ -471,27 +550,219 @@ async def viz_ws(ws: WebSocket, slot: str = "a"):
 
             action = msg.get("action", "")
             send_info = False
-            did_sync = False
             scene = session.get_scene(slot)
             if scene is None:
                 await ws.close(code=4000, reason="No scene loaded in this slot.")
                 return
 
+            # When sync_display is on, B follows A only for view state:
+            # camera/view and clip. Frame / field / legend / overlay remain
+            # editable on B so unlike quantities and load frames can be compared.
+            _SLAVE_BLOCKED = {
+                "orbit", "pan", "zoom", "set_view", "set_clip",
+            }
+            if (
+                slot == "b"
+                and session.sync_display
+                and session.compare_mode
+                and action in _SLAVE_BLOCKED
+            ):
+                continue
+
+            if action == "probe":
+                # Hot path for hover/click picking. ``probe`` MUST NOT
+                # appear in ``_SLAVE_BLOCKED`` — slot B needs to pick
+                # independently even when ``sync_display`` is on. We
+                # echo ``req_id`` back so the client can drop late
+                # replies (last-write-wins) when hover events
+                # outpace round-trips.
+                try:
+                    res = scene.pick(
+                        int(msg.get("x", 0)),
+                        int(msg.get("y", 0)),
+                        mode=str(msg.get("mode", "node")),
+                        include_frames=bool(msg.get("include_frames", False)),
+                    )
+                except Exception:
+                    res = None
+                await ws.send_text(json.dumps({
+                    "type": "probe_result",
+                    "req_id": msg.get("req_id"),
+                    "slot": slot,
+                    "result": res,
+                }))
+                continue
+
+            if action == "probe_extrema":
+                try:
+                    res = scene.extrema_probes(
+                        int(msg.get("count", 1)),
+                        include_frames=bool(msg.get("include_frames", True)),
+                        exclude_nodes=msg.get("exclude_nodes") or [],
+                        exclude_cells=msg.get("exclude_cells") or [],
+                        visible_only=bool(msg.get("visible_only", False)),
+                    )
+                except Exception as exc:
+                    res = {"results": [], "reason": str(exc)}
+                await ws.send_text(json.dumps({
+                    "type": "probe_extrema_result",
+                    "req_id": msg.get("req_id"),
+                    "slot": slot,
+                    "payload": res,
+                }))
+                continue
+
+            if action == "project_probe_markers":
+                projections = []
+                for item in msg.get("markers", []) or []:
+                    if not isinstance(item, dict):
+                        continue
+                    try:
+                        marker = scene.project_probe_marker(item)
+                    except Exception:
+                        marker = None
+                    projections.append({
+                        "card_id": item.get("card_id"),
+                        "marker": marker,
+                    })
+                await ws.send_text(json.dumps({
+                    "type": "probe_marker_projection",
+                    "slot": slot,
+                    "markers": projections,
+                }))
+                continue
+
+            if action == "element_select":
+                try:
+                    state = scene.select_element_at(
+                        int(msg.get("x", 0)),
+                        int(msg.get("y", 0)),
+                        operation=str(msg.get("operation", "add")),
+                    )
+                except Exception:
+                    state = scene.element_selection_state()
+                await ws.send_text(json.dumps({
+                    "type": "element_selection",
+                    "slot": slot,
+                    "state": state,
+                }))
+                continue
+
+            if action == "element_box_select":
+                try:
+                    state = scene.select_elements_in_box(
+                        int(msg.get("x0", 0)),
+                        int(msg.get("y0", 0)),
+                        int(msg.get("x1", 0)),
+                        int(msg.get("y1", 0)),
+                        append=bool(msg.get("append", True)),
+                        operation=str(msg.get("operation", "add")),
+                    )
+                except Exception:
+                    state = scene.element_selection_state()
+                await ws.send_text(json.dumps({
+                    "type": "element_selection",
+                    "slot": slot,
+                    "state": state,
+                }))
+                continue
+
+            if action == "element_select_ids":
+                try:
+                    state = scene.select_elements_by_id(
+                        msg.get("start_id"),
+                        msg.get("end_id"),
+                        operation=str(msg.get("operation", "add")),
+                    )
+                except Exception:
+                    state = scene.element_selection_state()
+                await ws.send_text(json.dumps({
+                    "type": "element_selection",
+                    "slot": slot,
+                    "state": state,
+                }))
+                continue
+
+            if action == "element_selection_undo":
+                state = scene.undo_element_selection()
+                await ws.send_text(json.dumps({
+                    "type": "element_selection",
+                    "slot": slot,
+                    "state": state,
+                }))
+                continue
+
+            if action == "element_hide_selected":
+                state = scene.hide_selected_elements()
+                jpg = scene.render_jpeg()
+                await ws.send_bytes(jpg)
+                await ws.send_text(json.dumps(scene.info))
+                await ws.send_text(json.dumps({
+                    "type": "element_selection",
+                    "slot": slot,
+                    "state": state,
+                }))
+                continue
+
+            if action == "element_show_selected_only":
+                state = scene.show_only_selected_elements()
+                jpg = scene.render_jpeg()
+                await ws.send_bytes(jpg)
+                await ws.send_text(json.dumps(scene.info))
+                await ws.send_text(json.dumps({
+                    "type": "element_selection",
+                    "slot": slot,
+                    "state": state,
+                }))
+                continue
+
+            if action == "element_undo_hidden":
+                state = scene.undo_hidden_elements()
+                jpg = scene.render_jpeg()
+                await ws.send_bytes(jpg)
+                await ws.send_text(json.dumps(scene.info))
+                await ws.send_text(json.dumps({
+                    "type": "element_selection",
+                    "slot": slot,
+                    "state": state,
+                }))
+                continue
+
+            if action == "element_restore_all":
+                state = scene.restore_hidden_elements()
+                jpg = scene.render_jpeg()
+                await ws.send_bytes(jpg)
+                await ws.send_text(json.dumps(scene.info))
+                await ws.send_text(json.dumps({
+                    "type": "element_selection",
+                    "slot": slot,
+                    "state": state,
+                }))
+                continue
+
+            if action == "element_clear_selection":
+                state = scene.clear_element_selection()
+                await ws.send_text(json.dumps({
+                    "type": "element_selection",
+                    "slot": slot,
+                    "state": state,
+                }))
+                continue
+
+            if action == "element_selection_state":
+                await ws.send_text(json.dumps({
+                    "type": "element_selection",
+                    "slot": slot,
+                    "state": scene.element_selection_state(),
+                }))
+                continue
+
             if action == "orbit":
                 scene.orbit(float(msg.get("dx", 0)), float(msg.get("dy", 0)))
-                if session.sync_camera and session.compare_mode:
-                    session.mirror_camera(slot)
-                    did_sync = True
             elif action == "pan":
                 scene.pan(float(msg.get("dx", 0)), float(msg.get("dy", 0)))
-                if session.sync_camera and session.compare_mode:
-                    session.mirror_camera(slot)
-                    did_sync = True
             elif action == "zoom":
                 scene.zoom(float(msg.get("factor", 1.0)))
-                if session.sync_camera and session.compare_mode:
-                    session.mirror_camera(slot)
-                    did_sync = True
             elif action == "set_field":
                 scene.set_field(
                     msg["key"],
@@ -503,18 +774,21 @@ async def viz_ws(ws: WebSocket, slot: str = "a"):
                 scene.set_frame(int(msg.get("frame", 0)))
                 send_info = True
             elif action == "set_legend":
-                scene.set_clim(msg.get("vmin"), msg.get("vmax"))
+                # vmin/vmax may be intentionally omitted (e.g. font-only
+                # tweaks) — only push clim when at least one bound is given
+                # so we don't accidentally clear an existing manual range.
+                if "vmin" in msg or "vmax" in msg:
+                    scene.set_clim(msg.get("vmin"), msg.get("vmax"))
                 if "cmap" in msg:
                     scene.set_colormap(msg["cmap"])
+                if "font_pt" in msg and msg["font_pt"] is not None:
+                    scene.set_legend_font_pt(int(msg["font_pt"]))
                 send_info = True
             elif action == "set_view":
                 if "preset" in msg:
                     scene.set_preset_view(msg["preset"])
                 elif "camera" in msg:
                     scene.set_camera_state(msg["camera"])
-                if session.sync_camera and session.compare_mode:
-                    session.mirror_camera(slot)
-                    did_sync = True
             elif action == "show_edges":
                 scene.set_show_edges(bool(msg.get("show", False)))
                 send_info = True
@@ -523,6 +797,14 @@ async def viz_ws(ws: WebSocket, slot: str = "a"):
                 send_info = True
             elif action == "deform":
                 scene.set_deform_scale(float(msg.get("scale", 0.0)))
+                send_info = True
+            elif action == "set_clip":
+                scene.set_clip(
+                    enabled=msg.get("enabled"),
+                    axis=msg.get("axis"),
+                    position=msg.get("position"),
+                    invert=msg.get("invert"),
+                )
                 send_info = True
             elif action == "animate":
                 n_frames = msg.get("n_frames", 0)
@@ -543,14 +825,27 @@ async def viz_ws(ws: WebSocket, slot: str = "a"):
             else:
                 continue
 
-            # Push updated frame after any mutation
+            # Push updated frame to the originating slot.
             jpg = scene.render_jpeg()
             await ws.send_bytes(jpg)
             if send_info:
                 await ws.send_text(json.dumps(scene.info))
 
-            if did_sync:
-                await _push_peer_frame(slot)
+            # If sync_display is on, mirror A→B view state only. Frame,
+            # field and legend changes deliberately do not propagate to B.
+            if (
+                slot == "a"
+                and session.sync_display
+                and session.compare_mode
+                and action != "info"
+            ):
+                if action in {"orbit", "pan", "zoom", "set_view"}:
+                    session.mirror_camera("a")
+                elif action == "set_clip":
+                    session.mirror_state("a")
+                else:
+                    continue
+                await _push_slot_state("b", render=True)
 
     except WebSocketDisconnect:
         pass

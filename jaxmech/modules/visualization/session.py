@@ -29,7 +29,7 @@ class VizSession:
         self._vd_b: Optional[VizData] = None
         self._compare_mode: bool = False
         self._compare_locked: bool = False
-        self._sync_camera: bool = False
+        self._sync_display: bool = False
 
     # ------------------------------------------------------------------
     # Scene A (primary)
@@ -123,20 +123,31 @@ class VizSession:
         self._compare_locked = False
 
     # ------------------------------------------------------------------
-    # Synchronized camera
+    # Synchronized display (camera + clip)
     # ------------------------------------------------------------------
 
     @property
-    def sync_camera(self) -> bool:
-        return self._sync_camera
+    def sync_display(self) -> bool:
+        return self._sync_display
 
-    def set_sync_camera(self, enabled: bool) -> None:
-        self._sync_camera = enabled
-        if enabled:
-            self.mirror_camera("a")
+    # Back-compat alias (older callers may still ask for ``sync_camera``).
+    @property
+    def sync_camera(self) -> bool:
+        return self._sync_display
+
+    def set_sync_display(self, enabled: bool) -> None:
+        """Enable / disable geometric mirroring from A to B.
+
+        When enabled, scene B follows A's camera and cutting plane.
+        Field selection and legend state remain independent so A and B can
+        compare different quantities or different load frames.
+        """
+        self._sync_display = bool(enabled)
+        if self._sync_display:
+            self.mirror_state("a")
 
     def mirror_camera(self, source_slot: str = "a") -> None:
-        """Copy camera from *source_slot* to the other scene."""
+        """Copy only the camera from *source_slot* to the other scene."""
         src = self.get_scene(source_slot)
         dst = self.get_scene("b" if source_slot == "a" else "a")
         if src is None or dst is None:
@@ -144,6 +155,67 @@ class VizSession:
         cam = src.get_camera_state()
         if cam:
             dst.set_camera_state(cam)
+
+    def mirror_state(self, source_slot: str = "a") -> None:
+        """Copy synchronized view state from *source_slot* to the other scene.
+
+        Mirrors cutting plane and camera only. Frame, field selection,
+        scalar component, legend bounds, colormap and display toggles stay
+        independent between A and B.
+
+        Idempotency: every step compares the destination scene's current
+        value against the source value *before* calling the corresponding
+        setter, because each setter triggers an expensive
+        ``_rebuild_plotter`` call. When sync_display is enabled and the
+        user only orbits / pans / zooms A, almost every step here will
+        find dst already up-to-date and short-circuit, leaving only the
+        cheap camera copy at the bottom.
+        """
+        src = self.get_scene(source_slot)
+        dst_slot = "b" if source_slot == "a" else "a"
+        dst = self.get_scene(dst_slot)
+        if src is None or dst is None:
+            return
+
+        src_info = src.info
+        dst_info = dst.info
+
+        # 1) Cutting plane.
+        clip = src_info.get("clip") or {}
+        dst_clip = dst_info.get("clip") or {}
+        try:
+            new_clip = (
+                bool(clip.get("enabled", False)),
+                clip.get("axis"),
+                float(clip.get("position", 0.5)),
+                bool(clip.get("invert", False)),
+            )
+            cur_clip = (
+                bool(dst_clip.get("enabled", False)),
+                dst_clip.get("axis"),
+                float(dst_clip.get("position", 0.5)),
+                bool(dst_clip.get("invert", False)),
+            )
+            if new_clip != cur_clip:
+                dst.set_clip(
+                    enabled=new_clip[0],
+                    axis=new_clip[1],
+                    position=new_clip[2],
+                    invert=new_clip[3],
+                )
+        except Exception:
+            pass
+
+        # 2) Finally mirror the camera so view angle + zoom match exactly.
+        # ``set_camera_state`` is cheap (no plotter rebuild), so we always
+        # apply it — orbit / pan / zoom updates land here without paying
+        # for any of the heavier steps above.
+        cam = src.get_camera_state()
+        if cam:
+            try:
+                dst.set_camera_state(cam)
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     # Convenience: get scene by slot name
@@ -164,7 +236,9 @@ class VizSession:
         return {
             "compare_mode": self._compare_mode,
             "compare_locked": self._compare_locked,
-            "sync_camera": self._sync_camera,
+            "sync_display": self._sync_display,
+            # Back-compat key for older frontends still reading ``sync_camera``.
+            "sync_camera": self._sync_display,
             "scene_a": self._scene_a.info if self._scene_a else None,
             "scene_b": self._scene_b.info if self._scene_b else None,
         }

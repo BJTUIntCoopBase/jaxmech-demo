@@ -45,13 +45,12 @@ class LinearMaterialProperties:
     model_name: str = "linear_elastic"
     source_material: str = ""
 
-    def to_dict(self, *, use_b_ext: int, gauss_order: int) -> Dict[str, Any]:
+    def to_dict(self, *, use_b_ext: int) -> Dict[str, Any]:
         return {
             "E": self.E,
             "nu": self.nu,
             "thickness": self.thickness,
             "use_b_ext": use_b_ext,
-            "gauss_order": gauss_order,
         }
 
 
@@ -68,14 +67,13 @@ class J2PerfectPlasticProperties:
     source_material: str = ""
     density: Optional[float] = None
 
-    def to_dict(self, *, use_b_ext: int, gauss_order: int) -> Dict[str, Any]:
+    def to_dict(self, *, use_b_ext: int) -> Dict[str, Any]:
         return {
             "E": self.E,
             "nu": self.nu,
             "yield_stress": self.yield_stress,
             "thickness": self.thickness,
             "use_b_ext": use_b_ext,
-            "gauss_order": gauss_order,
             "hardening": self.hardening,
         }
 

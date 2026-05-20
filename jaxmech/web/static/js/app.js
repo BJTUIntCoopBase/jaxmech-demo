@@ -454,7 +454,6 @@ const App = {
       E_override: 'elastic-E',
       nu_override: 'elastic-nu',
       yield_stress_override: 'elastic-yield',
-      gauss_order: 'elastic-gauss-order',
       n_increments: 'elastic-n-increments',
       max_iterations: 'elastic-max-iterations',
       convergence_tol: 'elastic-convergence-tol',
@@ -574,9 +573,6 @@ const App = {
     if (String(analysisInput.use_b_ext ?? '0') !== '0') {
       controls.push({ label: 'B-bar 扩展', value: '启用' });
     }
-    if (!this._isElasticBlankValue(analysisInput.gauss_order)) {
-      controls.push({ label: 'Gauss order', value: this._formatElasticValue(analysisInput.gauss_order) });
-    }
     if (!this._isElasticBlankValue(analysisInput.max_iterations)) {
       controls.push({ label: 'Max iterations', value: this._formatElasticValue(analysisInput.max_iterations) });
     }
@@ -606,7 +602,6 @@ const App = {
       nu_override: draft.nu_override,
       yield_stress_override: materialModel === 'j2_perfect_plastic' ? draft.yield_stress_override : '',
       use_b_ext: draft.use_b_ext ?? '0',
-      gauss_order: draft.gauss_order ?? '',
       n_increments: this._isElasticBlankValue(draft.n_increments)
         ? (step.default_n_increments ?? 1)
         : draft.n_increments,
@@ -723,7 +718,6 @@ const App = {
       nu_override: elastic.nu ?? '',
       yield_stress_override: materialModel === 'j2_perfect_plastic' ? (plastic.yield_stress ?? '') : '',
       use_b_ext: '0',
-      gauss_order: '',
       n_increments: step.default_n_increments ?? 1,
       max_iterations: '',
       convergence_tol: '',
@@ -876,7 +870,6 @@ const App = {
     const yieldValue = resolveDraft('yield_stress_override', plastic.yield_stress);
     const useBExt = String(draft.use_b_ext ?? '0') !== '0';
     const step = primary.step || {};
-    const gaussOrderValue = resolveDraft('gauss_order', '');
     const nIncrementsValue = resolveDraft('n_increments', step.default_n_increments || 1);
     const maxIterationsValue = resolveDraft('max_iterations', '');
     const convergenceTolValue = resolveDraft('convergence_tol', '');
@@ -962,10 +955,6 @@ const App = {
       total_time = ${UI.escapeHtml(String(step.total_time ?? '-'))}，
       默认 increment 数 = ${UI.escapeHtml(String(step.default_n_increments || 1))}。
     </div>
-        <div class="form-group" style="margin:0">
-          <label class="form-label">Gauss order</label>
-          <input class="form-input" type="number" id="elastic-gauss-order" min="1" step="1" value="${UI.escapeAttr(String(gaussOrderValue))}" placeholder="留空则使用程序默认值" oninput="App._onElasticDraftChange()" onchange="App._onElasticDraftChange()" />
-        </div>
         <div class="form-group" style="margin:0">
           <label class="form-label">Increment count</label>
           <input class="form-input" type="number" id="elastic-n-increments" min="1" step="1" value="${UI.escapeAttr(String(nIncrementsValue))}" oninput="App._onElasticDraftChange()" onchange="App._onElasticDraftChange()" />
@@ -1132,7 +1121,6 @@ const App = {
     const eValue = document.getElementById('elastic-E')?.value?.trim();
     const nuValue = document.getElementById('elastic-nu')?.value?.trim();
     const yieldValue = document.getElementById('elastic-yield')?.value?.trim();
-    const gaussOrder = document.getElementById('elastic-gauss-order')?.value?.trim() || '';
     const nIncrements = document.getElementById('elastic-n-increments')?.value?.trim() || String(selectedMeta[0]?.step?.default_n_increments || '1');
     const maxIterations = document.getElementById('elastic-max-iterations')?.value?.trim() || '';
     const convergenceTol = document.getElementById('elastic-convergence-tol')?.value?.trim() || '';
@@ -1146,7 +1134,6 @@ const App = {
       eValue,
       nuValue,
       yieldValue,
-      gaussOrder,
       nIncrements,
       maxIterations,
       convergenceTol,
@@ -1157,7 +1144,7 @@ const App = {
     const payload = this._collectElasticSubmission();
     if (!payload) return;
 
-    const { model, selectedInps, materialModel, useBExt, eValue, nuValue, yieldValue, gaussOrder, nIncrements, maxIterations, convergenceTol } = payload;
+    const { model, selectedInps, materialModel, useBExt, eValue, nuValue, yieldValue, nIncrements, maxIterations, convergenceTol } = payload;
 
     const modelRoot = this.winToWsl(model.path);
     const materialLabel = materialModel === 'j2_perfect_plastic' ? 'J2' : 'Linear';
@@ -1177,7 +1164,6 @@ const App = {
         nu_override: nuValue,
         yield_stress_override: materialModel === 'j2_perfect_plastic' ? yieldValue : '',
         use_b_ext: useBExt,
-        gauss_order: gaussOrder,
         n_increments: nIncrements,
         max_iterations: maxIterations,
         convergence_tol: convergenceTol,
@@ -1196,7 +1182,6 @@ const App = {
     cfgLines.push(']');
     cfgLines.push('');
     if (useBExt) cfgLines.push('use_b_ext = 1');
-    if (gaussOrder) cfgLines.push(`gauss_order = ${gaussOrder}`);
     cfgLines.push(`n_increments = ${nIncrements}`);
     if (maxIterations) cfgLines.push(`max_iterations = ${maxIterations}`);
     if (convergenceTol) cfgLines.push(`convergence_tol = ${convergenceTol}`);
@@ -1687,7 +1672,6 @@ const App = {
     const convergenceTol = document.getElementById('dca-convergence-tol')?.value?.trim() || defaultConvergenceTol;
     const cycleTolerance = document.getElementById('dca-cycle-tolerance')?.value?.trim() || defaultCycleTolerance;
     const constitutiveBackend = 'j2_perfect_plastic';
-    const gaussOrder = '2';
     const useBExt = String(vals.use_b_ext ?? this._dcaDefaultUseBExt()) !== '0' ? '1' : '0';
     const eOverride = document.getElementById('dca-E')?.value?.trim();
     const nuOverride = document.getElementById('dca-nu')?.value?.trim();
@@ -1718,7 +1702,6 @@ const App = {
     lines.push(`constitutive_backend = "${constitutiveBackend}"`);
     lines.push('constitutive_options = {}');
     lines.push(`use_b_ext = ${useBExt}`);
-    lines.push(`gauss_order = ${gaussOrder}`);
     lines.push('');
 
     await this.apiPut(`/api/config/direct_methods_steady_state_dca?model_path=${encodeURIComponent(run.runDirWin)}`, {
@@ -2759,7 +2742,6 @@ const App = {
     }
     lines.push(`angle_deg = ${loadCombination.angle_deg ?? vals.angle_deg ?? '0.0'}`);
     lines.push(`fix_load2 = ${selected.length === 2 && String(vals.n_vert || '2') === '2' && this._dmBoolFlag(vals.fix_load2, false) ? 'true' : 'false'}`);
-    lines.push('gauss_order = 1');
     lines.push(`use_b_ext = ${this._dmBoolFlag(vals.use_b_ext, true) ? '1' : '0'}`);
     lines.push('');
 
@@ -5211,6 +5193,7 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
     info_b: null,
     compareMode: false,
     compareLocked: false,
+    syncDisplay: false,
     dragging: false,
     dragSlot: null,
     lastX: 0,
@@ -5225,10 +5208,48 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
     modelByKey: {},
     matCache: {},
     playTimers: {},
+    playInFlight: {},
     slotState: {
       a: { modelKey: '', matPath: '', mats: [], family: '', quantityValue: '', inspect: null, selectedFields: [], sourceLocked: false },
       b: { modelKey: '', matPath: '', mats: [], family: '', quantityValue: '', inspect: null, selectedFields: [], sourceLocked: false },
     },
+    // ---- Probe (Abaqus-style hover/click picking) -----------------
+    // Two distinct modes: 'node' (only valid for node-located fields)
+    // and 'element' (Gauss / element-located fields; lists every GP
+    // value on the picked element). Mode is toggled in the A
+    // toolbar; both A and B canvases share the same mode.
+    probeMode: false,
+    probeKind: 'node',
+    // Per-slot last-issued req_id. The WS reply echoes ``req_id``;
+    // we drop late replies to keep hover responsive on big meshes
+    // ("last-write-wins").
+    probePending: { a: 0, b: 0 },
+    probeNextReqId: 1,
+    // Transient hover card (single DOM node, follows the cursor).
+    probeHoverEl: null,
+    probeHoverMarkerEl: null,
+    probeHoverThrottleAt: 0,
+    // Pinned cards (max 20), each entry frozen at click time with its
+    // mode/field/frame/data so later UI changes never mutate it.
+    probeCards: [],
+    probeNextCardId: 1,
+    probeMarkers: [],
+    probeCompareSettings: null,
+    probeNextChartId: 1,
+    // Saved field key per slot to restore when probe is toggled off
+    // (probe mode temporarily constrains the field dropdown).
+    probeSavedFieldKey: { a: '', b: '' },
+    probeSavedFieldComponent: { a: null, b: null },
+    elementSelectMode: false,
+    elementSelectTab: 'box',
+    elementBoxDrag: null,
+    elementRightClickCandidate: null,
+    elementLastConfirmAt: 0,
+    elementSelection: {
+      a: { selected: [], hidden_count: 0, can_undo: false, markers: [] },
+      b: { selected: [], hidden_count: 0, can_undo: false, markers: [] },
+    },
+    elementSelectionMarkerEls: { a: [], b: [] },
   },
 
   async loadVisualization() {
@@ -5278,7 +5299,7 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
       <div class="viz-layout">
         <div class="viz-toolbar" id="viz-toolbar-a">
           <div class="viz-group viz-source-group">
-            <span class="viz-group-label">模型 / 结果 A</span>
+            <span class="viz-group-label">模型 A</span>
             <div class="viz-source-picker" id="viz-source-picker-a">
               <select id="viz-model-a" class="viz-model-select">
                 <option value="">加载中...</option>
@@ -5296,34 +5317,28 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
             </div>
           </div>
           <div class="viz-sep"></div>
-          <div class="viz-group">
+          <div class="viz-group viz-field-group">
             <span class="viz-group-label">结果量</span>
             <select id="viz-family-a" class="viz-field-family" disabled>
               <option value="">类别</option>
             </select>
-            <select id="viz-quantity-a" class="viz-field-select" disabled>
+            <select id="viz-quantity-a" class="viz-field-select" disabled title="">
               <option value="">结果量</option>
             </select>
-            <span class="viz-field-map" id="viz-field-map-a"></span>
+            <span class="viz-field-map" id="viz-field-map-a" style="display:none"></span>
           </div>
           <div class="viz-sep"></div>
-          <div class="viz-group viz-action-group">
-            <button class="viz-btn" id="viz-edges-a" title="显示或隐藏网格边线">网格</button>
-            <button class="viz-btn" id="viz-overlay-a" title="显示或隐藏文件信息与坐标轴">信息</button>
-            <button class="viz-btn viz-frame-step" id="viz-frame-prev-a" title="上一帧" aria-label="上一帧"><span class="viz-icon viz-icon-prev" aria-hidden="true"></span></button>
-            <button class="viz-btn viz-frame-play" id="viz-frame-play-a" title="连续播放" aria-label="连续播放"><span class="viz-icon viz-icon-play" aria-hidden="true"></span></button>
-            <button class="viz-btn viz-frame-step" id="viz-frame-next-a" title="下一帧" aria-label="下一帧"><span class="viz-icon viz-icon-next" aria-hidden="true"></span></button>
-            <button class="viz-btn" id="viz-screenshot-a" title="导出 300 DPI PNG">截图</button>
-          </div>
-          <div class="viz-sep viz-row-break"></div>
           <div class="viz-group viz-frame-group">
             <span class="viz-group-label">帧</span>
             <input type="range" id="viz-frame-slider-a" min="0" max="0" value="0" disabled>
-            <span class="viz-frame-display" id="viz-frame-label-a">1/1</span>
-            <button class="viz-btn viz-frame-detail" id="viz-frame-detail-a" title="" disabled>详见信息</button>
+            <button class="viz-btn viz-frame-step" id="viz-frame-prev-a" title="上一帧" aria-label="上一帧"><span class="viz-icon viz-icon-prev" aria-hidden="true"></span></button>
+            <button class="viz-btn viz-frame-play" id="viz-frame-play-a" title="连续播放" aria-label="连续播放"><span class="viz-icon viz-icon-play" aria-hidden="true"></span></button>
+            <button class="viz-btn viz-frame-step" id="viz-frame-next-a" title="下一帧" aria-label="下一帧"><span class="viz-icon viz-icon-next" aria-hidden="true"></span></button>
+            <span class="viz-frame-display" id="viz-frame-label-a" title="">1/1</span>
+            <span class="viz-frame-detail-host" id="viz-frame-detail-a" style="display:none"></span>
           </div>
           <div class="viz-sep"></div>
-          <div class="viz-group">
+          <div class="viz-group viz-view-group">
             <span class="viz-group-label">视图</span>
             <button class="viz-btn viz-view-btn" data-view="+x" data-slot="a">+X</button>
             <button class="viz-btn viz-view-btn" data-view="-x" data-slot="a">-X</button>
@@ -5334,32 +5349,47 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
             <button class="viz-btn viz-view-btn" data-view="iso" data-slot="a">ISO</button>
           </div>
           <div class="viz-sep"></div>
-          <div class="viz-group">
-            <span class="viz-group-label">图例</span>
-            <input type="number" id="viz-clim-min-a" placeholder="min" step="any" style="width:70px">
-            <span style="color:var(--text-muted)">~</span>
-            <input type="number" id="viz-clim-max-a" placeholder="max" step="any" style="width:70px">
-            <button class="viz-btn" id="viz-clim-apply-a">应用</button>
-            <button class="viz-btn active" id="viz-clim-auto-a" title="锁定当前自动范围或恢复自动范围">自动</button>
+          <div class="viz-group viz-display-actions">
+            <button class="viz-btn" id="viz-edges-a" title="显示或隐藏网格边线">网格</button>
+            <button class="viz-btn" id="viz-overlay-a" title="显示或隐藏文件信息与坐标轴">信息</button>
+            <button class="viz-btn" id="viz-screenshot-a" title="导出 300 DPI PNG">截图</button>
           </div>
-          <div class="viz-sep"></div>
-          <div class="viz-group viz-compare-toolbar" id="viz-compare-toolbar">
-            <span class="viz-group-label">对比</span>
-            <button class="viz-btn viz-compare-btn" id="viz-compare-toggle" title="切换 A/B 双栏对比">双栏对比</button>
-            <button class="viz-btn" id="viz-sync-camera" title="同步 A/B 视角和缩放大小" style="display:none">同步视角</button>
-            <button class="viz-btn" id="viz-diff-run" title="计算当前 A/B 显示标量的 Diff" style="display:none">对比</button>
-            <label class="viz-inline-check" id="viz-diff-absolute-wrap" style="display:none" title="勾选后计算 |B-A|，未勾选时计算 B-A">
-              <input type="checkbox" id="viz-diff-absolute">
-              <span>|B-A|</span>
-            </label>
-            <button class="viz-btn" id="viz-diff-boxplot" title="显示当前 Diff 的箱线图" style="display:none" disabled>箱线图</button>
-            <button class="viz-btn" id="viz-diff-save" title="将当前 Diff 下载为 MAT 文件" style="display:none" disabled>保存Diff</button>
+          <div class="viz-sep viz-row-break"></div>
+          <div class="viz-group viz-legend-group">
+            <span class="viz-group-label">图例</span>
+            <input type="number" id="viz-clim-min-a" placeholder="min" step="any">
+            <span style="color:var(--text-muted)">~</span>
+            <input type="number" id="viz-clim-max-a" placeholder="max" step="any">
+            <button class="viz-btn" id="viz-clim-apply-a" title="应用色标范围">应用</button>
+            <button class="viz-btn active" id="viz-clim-auto-a" title="锁定当前自动范围或恢复自动范围">自动</button>
+            <select id="viz-legend-font-a" class="viz-legend-font" title="图例字体大小（pt）" aria-label="图例字体大小">
+              <option value="8">8pt</option>
+              <option value="10" selected>10pt</option>
+              <option value="12">12pt</option>
+              <option value="14">14pt</option>
+              <option value="16">16pt</option>
+              <option value="18">18pt</option>
+              <option value="20">20pt</option>
+              <option value="22">22pt</option>
+              <option value="24">24pt</option>
+              <option value="28">28pt</option>
+            </select>
+          </div>
+          <div class="viz-sep viz-sep-strong"></div>
+          <div class="viz-group viz-clip-group">
+            <button class="viz-btn viz-clip-toggle" id="viz-clip-toggle-a" data-slot="a" title="开启或关闭轴对齐剖切，观察实体内部场分布">剖切</button>
+            <button class="viz-btn viz-clip-axis" data-axis="x" data-slot="a" title="沿 X 法向剖切" disabled>X</button>
+            <button class="viz-btn viz-clip-axis" data-axis="y" data-slot="a" title="沿 Y 法向剖切" disabled>Y</button>
+            <button class="viz-btn viz-clip-axis active" data-axis="z" data-slot="a" title="沿 Z 法向剖切" disabled>Z</button>
+            <input type="range" class="viz-clip-slider" id="viz-clip-slider-a" min="0" max="1000" value="500" step="1" disabled title="拖动剖切平面位置">
+            <span class="viz-clip-display" id="viz-clip-label-a">Z 50%</span>
+            <button class="viz-btn viz-clip-flip" id="viz-clip-flip-a" data-slot="a" title="翻转保留的一侧（类似 ABAQUS view-cut 的 Above/Below）" disabled>翻转</button>
           </div>
         </div>
 
         <div class="viz-toolbar" id="viz-toolbar-b" style="display:none">
           <div class="viz-group viz-source-group">
-            <span class="viz-group-label">模型 / 结果 B</span>
+            <span class="viz-group-label">模型 B</span>
             <div class="viz-source-picker" id="viz-source-picker-b">
               <select id="viz-model-b" class="viz-model-select">
                 <option value="">加载中...</option>
@@ -5377,34 +5407,28 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
             </div>
           </div>
           <div class="viz-sep"></div>
-          <div class="viz-group">
+          <div class="viz-group viz-field-group">
             <span class="viz-group-label">结果量</span>
             <select id="viz-family-b" class="viz-field-family" disabled>
               <option value="">类别</option>
             </select>
-            <select id="viz-quantity-b" class="viz-field-select" disabled>
+            <select id="viz-quantity-b" class="viz-field-select" disabled title="">
               <option value="">结果量</option>
             </select>
-            <span class="viz-field-map" id="viz-field-map-b"></span>
+            <span class="viz-field-map" id="viz-field-map-b" style="display:none"></span>
           </div>
           <div class="viz-sep"></div>
-          <div class="viz-group viz-action-group">
-            <button class="viz-btn" id="viz-edges-b" title="显示或隐藏网格边线">网格</button>
-            <button class="viz-btn" id="viz-overlay-b" title="显示或隐藏文件信息与坐标轴">信息</button>
-            <button class="viz-btn viz-frame-step" id="viz-frame-prev-b" title="上一帧" aria-label="上一帧"><span class="viz-icon viz-icon-prev" aria-hidden="true"></span></button>
-            <button class="viz-btn viz-frame-play" id="viz-frame-play-b" title="连续播放" aria-label="连续播放"><span class="viz-icon viz-icon-play" aria-hidden="true"></span></button>
-            <button class="viz-btn viz-frame-step" id="viz-frame-next-b" title="下一帧" aria-label="下一帧"><span class="viz-icon viz-icon-next" aria-hidden="true"></span></button>
-            <button class="viz-btn" id="viz-screenshot-b" title="导出 300 DPI PNG">截图</button>
-          </div>
-          <div class="viz-sep viz-row-break"></div>
           <div class="viz-group viz-frame-group">
             <span class="viz-group-label">帧</span>
             <input type="range" id="viz-frame-slider-b" min="0" max="0" value="0" disabled>
-            <span class="viz-frame-display" id="viz-frame-label-b">1/1</span>
-            <button class="viz-btn viz-frame-detail" id="viz-frame-detail-b" title="" disabled>详见信息</button>
+            <button class="viz-btn viz-frame-step" id="viz-frame-prev-b" title="上一帧" aria-label="上一帧"><span class="viz-icon viz-icon-prev" aria-hidden="true"></span></button>
+            <button class="viz-btn viz-frame-play" id="viz-frame-play-b" title="连续播放" aria-label="连续播放"><span class="viz-icon viz-icon-play" aria-hidden="true"></span></button>
+            <button class="viz-btn viz-frame-step" id="viz-frame-next-b" title="下一帧" aria-label="下一帧"><span class="viz-icon viz-icon-next" aria-hidden="true"></span></button>
+            <span class="viz-frame-display" id="viz-frame-label-b" title="">1/1</span>
+            <span class="viz-frame-detail-host" id="viz-frame-detail-b" style="display:none"></span>
           </div>
           <div class="viz-sep"></div>
-          <div class="viz-group">
+          <div class="viz-group viz-view-group">
             <span class="viz-group-label">视图</span>
             <button class="viz-btn viz-view-btn" data-view="+x" data-slot="b">+X</button>
             <button class="viz-btn viz-view-btn" data-view="-x" data-slot="b">-X</button>
@@ -5415,13 +5439,99 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
             <button class="viz-btn viz-view-btn" data-view="iso" data-slot="b">ISO</button>
           </div>
           <div class="viz-sep"></div>
-          <div class="viz-group">
+          <div class="viz-group viz-display-actions">
+            <button class="viz-btn" id="viz-edges-b" title="显示或隐藏网格边线">网格</button>
+            <button class="viz-btn" id="viz-overlay-b" title="显示或隐藏文件信息与坐标轴">信息</button>
+            <button class="viz-btn" id="viz-screenshot-b" title="导出 300 DPI PNG">截图</button>
+          </div>
+          <div class="viz-sep viz-row-break"></div>
+          <div class="viz-group viz-legend-group">
             <span class="viz-group-label">图例</span>
-            <input type="number" id="viz-clim-min-b" placeholder="min" step="any" style="width:70px">
+            <input type="number" id="viz-clim-min-b" placeholder="min" step="any">
             <span style="color:var(--text-muted)">~</span>
-            <input type="number" id="viz-clim-max-b" placeholder="max" step="any" style="width:70px">
-            <button class="viz-btn" id="viz-clim-apply-b">应用</button>
+            <input type="number" id="viz-clim-max-b" placeholder="max" step="any">
+            <button class="viz-btn" id="viz-clim-apply-b" title="应用色标范围">应用</button>
             <button class="viz-btn active" id="viz-clim-auto-b" title="锁定当前自动范围或恢复自动范围">自动</button>
+            <select id="viz-legend-font-b" class="viz-legend-font" title="图例字体大小（pt）" aria-label="图例字体大小">
+              <option value="8">8pt</option>
+              <option value="10" selected>10pt</option>
+              <option value="12">12pt</option>
+              <option value="14">14pt</option>
+              <option value="16">16pt</option>
+              <option value="18">18pt</option>
+              <option value="20">20pt</option>
+              <option value="22">22pt</option>
+              <option value="24">24pt</option>
+              <option value="28">28pt</option>
+            </select>
+          </div>
+          <div class="viz-sep viz-sep-strong"></div>
+          <div class="viz-group viz-clip-group">
+            <button class="viz-btn viz-clip-toggle" id="viz-clip-toggle-b" data-slot="b" title="开启或关闭轴对齐剖切，观察实体内部场分布">剖切</button>
+            <button class="viz-btn viz-clip-axis" data-axis="x" data-slot="b" title="沿 X 法向剖切" disabled>X</button>
+            <button class="viz-btn viz-clip-axis" data-axis="y" data-slot="b" title="沿 Y 法向剖切" disabled>Y</button>
+            <button class="viz-btn viz-clip-axis active" data-axis="z" data-slot="b" title="沿 Z 法向剖切" disabled>Z</button>
+            <input type="range" class="viz-clip-slider" id="viz-clip-slider-b" min="0" max="1000" value="500" step="1" disabled title="拖动剖切平面位置">
+            <span class="viz-clip-display" id="viz-clip-label-b">Z 50%</span>
+            <button class="viz-btn viz-clip-flip" id="viz-clip-flip-b" data-slot="b" title="翻转保留的一侧（类似 ABAQUS view-cut 的 Above/Below）" disabled>翻转</button>
+          </div>
+        </div>
+
+        <div class="viz-toolbar viz-common-toolbar" id="viz-common-toolbar" style="display:none">
+          <div class="viz-group viz-common-label-group">
+            <span class="viz-group-label">通用功能</span>
+          </div>
+          <div class="viz-sep viz-common-divider"></div>
+          <div class="viz-group viz-element-select-group" id="viz-element-select-group">
+            <button class="viz-btn viz-element-select-toggle" id="viz-element-select-toggle" title="单元选取：左键追加，右键单击撤销上一步，空格确认">单元选取</button>
+          </div>
+          <div class="viz-sep viz-common-divider"></div>
+          <div class="viz-group viz-probe-group" id="viz-probe-group-a">
+            <button class="viz-btn" id="viz-probe-toggle" title="探针：移动鼠标预览，左键固定，Shift+左键旋转">探针</button>
+            <div class="viz-probe-mode" id="viz-probe-mode" role="tablist" aria-label="探针模式">
+              <button class="viz-btn viz-probe-mode-btn active" data-probe-mode="node" title="节点模式：只对节点字段 (U/NFORC) 做探针" disabled>节点</button>
+              <button class="viz-btn viz-probe-mode-btn" data-probe-mode="element" title="单元模式：列出击中单元的所有 Gauss 点值 (S/E/PEEQ)" disabled>单元</button>
+            </div>
+            <span class="viz-probe-counter" id="viz-probe-counter" title="已固定的探针卡数 / 上限">0/20</span>
+            <button class="viz-btn" id="viz-probe-compare" title="比较已固定探针的 frame history" disabled>探针比较</button>
+            <button class="viz-btn viz-probe-export-btn" id="viz-probe-export" title="导出所有探针卡到 CSV" disabled>探针导出</button>
+            <label class="viz-inline-check viz-probe-frames-wrap" id="viz-probe-all-frames-wrap" title="导出选项：勾选后导出每张探针卡在全部 frame 上的值">
+              <span>（</span>
+              <input type="checkbox" id="viz-probe-all-frames" disabled>
+              <span>全部frames）</span>
+            </label>
+            <div class="viz-probe-extrema-wrap" title="极值探针：基于当前显示场变量自动添加探针">
+              <button class="viz-btn" id="viz-probe-extrema" title="自动选取当前场变量的极值并添加探针：若全部有限值均大于 0，选取 n 个最大值；若同时有正值和负值，选取 round(n/2) 个最大正值和剩余数量的最小负值；若只有非正值，选取 n 个最小值。未勾选可见单元时从全部单元/节点中选，勾选后只从当前可见单元/节点中选。" disabled>极值探针</button>
+              <select id="viz-probe-extrema-count" class="viz-probe-extrema-count" aria-label="极值探针数量" disabled>
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="3" selected>3</option>
+                <option value="4">4</option>
+                <option value="5">5</option>
+                <option value="6">6</option>
+                <option value="7">7</option>
+                <option value="8">8</option>
+                <option value="9">9</option>
+                <option value="10">10</option>
+              </select>
+              <label class="viz-inline-check viz-probe-visible-wrap" id="viz-probe-visible-wrap" title="极值探针选项：勾选后只在当前可见单元/节点中寻找极值">
+                <span>（</span>
+                <input type="checkbox" id="viz-probe-visible-only" disabled>
+                <span>可见单元）</span>
+              </label>
+            </div>
+          </div>
+          <div class="viz-sep viz-common-divider"></div>
+          <div class="viz-group viz-compare-toolbar" id="viz-compare-toolbar">
+            <button class="viz-btn viz-compare-btn" id="viz-compare-toggle" title="切换 A/B 双栏对比">双栏对比</button>
+            <button class="viz-btn" id="viz-sync-display" title="将 B 的视角、缩放和剖切锁定到 A；B 的帧与结果量仍可独立选择" disabled>同步显示</button>
+            <button class="viz-btn" id="viz-diff-run" title="计算当前 A/B 显示标量的 Diff" disabled>对比</button>
+            <label class="viz-inline-check" id="viz-diff-absolute-wrap" title="勾选后计算 |B-A|，未勾选时计算 B-A">
+              <input type="checkbox" id="viz-diff-absolute">
+              <span>|B-A|</span>
+            </label>
+            <button class="viz-btn" id="viz-diff-boxplot" title="显示当前 Diff 的箱线图" disabled>箱线图</button>
+            <button class="viz-btn" id="viz-diff-save" title="将当前 Diff 下载为 MAT 文件" disabled>保存Diff</button>
           </div>
         </div>
 
@@ -5430,13 +5540,59 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
             <span class="viz-panel-label">A</span>
             <canvas id="viz-canvas-a" width="800" height="600"></canvas>
             <div class="viz-math-overlay" id="viz-math-overlay-a" style="display:none"></div>
+            <div class="viz-probe-pin-host" id="viz-probe-pin-host-a"></div>
+            <div class="viz-element-box" id="viz-element-box-a" style="display:none"></div>
             <div class="viz-empty" id="viz-empty-a"></div>
           </div>
           <div class="viz-canvas-panel" id="viz-panel-b" style="display:none">
             <span class="viz-panel-label">B</span>
             <canvas id="viz-canvas-b" width="800" height="600"></canvas>
             <div class="viz-math-overlay" id="viz-math-overlay-b" style="display:none"></div>
+            <div class="viz-probe-pin-host" id="viz-probe-pin-host-b"></div>
+            <div class="viz-element-box" id="viz-element-box-b" style="display:none"></div>
             <div class="viz-empty" id="viz-empty-b"></div>
+          </div>
+          <div class="viz-probe-hover-card" id="viz-probe-hover-card" style="display:none"></div>
+          <div class="viz-element-select-panel" id="viz-element-select-panel" style="display:none">
+            <div class="viz-element-select-panel-head">
+              <div>
+                <div class="viz-element-select-panel-title">单元选取</div>
+                <div class="viz-element-select-panel-subtitle">框选或按编号追加选择；移动鼠标可预览当前结果量探针；空格隐藏选中</div>
+              </div>
+              <button class="viz-btn" id="viz-element-panel-close" title="关闭单元选取">关闭</button>
+            </div>
+            <div class="viz-element-select-tabs" role="tablist" aria-label="单元选取方式">
+              <button class="viz-btn viz-element-tab active" data-element-tab="box">框选</button>
+              <button class="viz-btn viz-element-tab" data-element-tab="ids">编号选</button>
+            </div>
+            <div class="viz-element-tab-body" data-element-tab-body="box">
+              <div class="viz-element-select-help">左键单击或拖框追加；Shift+左键转动视角；右键单击撤销上一步，右键拖动仍平移模型。</div>
+              <div class="viz-element-select-panel-actions">
+                <button class="viz-btn" data-element-action="hide" title="隐藏当前选中的单元" disabled>隐藏选中</button>
+                <button class="viz-btn" data-element-action="show-only" title="隐藏未选中的可见单元，只保留当前选中单元" disabled>只显示选中</button>
+                <button class="viz-btn" data-element-action="undo" title="撤销最近一次隐藏" disabled>撤销隐藏</button>
+                <button class="viz-btn" data-element-action="restore" title="恢复所有隐藏单元" disabled>恢复全部</button>
+              </div>
+            </div>
+            <div class="viz-element-tab-body" data-element-tab-body="ids" style="display:none">
+              <div class="viz-element-id-row">
+                <label>起始单元
+                  <input type="text" id="viz-element-id-start" inputmode="numeric" placeholder="如 18">
+                </label>
+                <label>结束单元
+                  <input type="text" id="viz-element-id-end" inputmode="numeric" placeholder="留空则单选">
+                </label>
+                <button class="viz-btn" id="viz-element-id-add" title="按输入编号追加选择">选择</button>
+              </div>
+              <div class="viz-element-select-help">只输入一个编号时只选择该单元；非数字不选；超出范围会按当前模型最大范围截断。</div>
+              <div class="viz-element-select-panel-actions">
+                <button class="viz-btn" data-element-action="hide" title="隐藏当前选中的单元" disabled>隐藏选中</button>
+                <button class="viz-btn" data-element-action="show-only" title="隐藏未选中的可见单元，只保留当前选中单元" disabled>只显示选中</button>
+                <button class="viz-btn" data-element-action="undo" title="撤销最近一次隐藏" disabled>撤销隐藏</button>
+                <button class="viz-btn" data-element-action="restore" title="恢复所有隐藏单元" disabled>恢复全部</button>
+              </div>
+            </div>
+            <div class="viz-element-select-status" id="viz-element-select-status">选中 0 / 隐藏 0</div>
           </div>
         </div>
 
@@ -5463,6 +5619,23 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
               <svg id="viz-boxplot-svg" viewBox="0 0 820 240" preserveAspectRatio="xMidYMid meet"></svg>
             </div>
             <div class="viz-boxplot-stats" id="viz-boxplot-stats"></div>
+          </div>
+        </div>
+
+        <div class="viz-modal" id="viz-probe-compare-modal" style="display:none">
+          <div class="viz-modal-backdrop" id="viz-probe-compare-backdrop"></div>
+          <div class="viz-modal-card viz-probe-compare-modal-card">
+            <div class="viz-modal-header">
+              <div>
+                <div class="viz-modal-title">探针比较</div>
+                <div class="viz-modal-subtitle">选择两个探针的 frame history 进行图形化比较；每次重绘会关闭旧图。</div>
+              </div>
+              <div class="viz-modal-actions">
+                <button class="viz-btn primary" id="viz-probe-compare-run">确定</button>
+                <button class="viz-btn" id="viz-probe-compare-close">关闭</button>
+              </div>
+            </div>
+            <div class="viz-probe-compare-list" id="viz-probe-compare-list"></div>
           </div>
         </div>
 
@@ -5594,6 +5767,13 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
         }
       });
 
+      document.getElementById(`viz-legend-font-${slot}`)?.addEventListener('change', (e) => {
+        const pt = parseInt(e.target.value, 10);
+        if (Number.isFinite(pt)) {
+          this._vizSendWs(slot, {action: 'set_legend', font_pt: pt});
+        }
+      });
+
       document.getElementById(`viz-frame-prev-${slot}`)?.addEventListener('click', () => {
         this._vizStepFrame(slot, -1);
       });
@@ -5648,6 +5828,52 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
       });
     });
 
+    document.querySelectorAll('.viz-clip-axis').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (btn.disabled) return;
+        const slot = btn.dataset.slot || 'a';
+        document.querySelectorAll(`.viz-clip-axis[data-slot="${slot}"]`).forEach(el => {
+          el.classList.toggle('active', el === btn);
+        });
+        this._vizUpdateClipLabel(slot, this._vizCurrentClipPosition(slot));
+        this._vizQueueClip(slot, {axis: btn.dataset.axis});
+      });
+    });
+
+    document.querySelectorAll('.viz-clip-flip').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (btn.disabled) return;
+        const slot = btn.dataset.slot || 'a';
+        const currentInvert = !!btn.classList.contains('active');
+        const next = !currentInvert;
+        btn.classList.toggle('active', next);
+        this._vizQueueClip(slot, {invert: next});
+      });
+    });
+
+    // 剖切 is now a single toggle button (replaced the old label + 启用
+    // checkbox). Clicking it flips the clip on/off; the axis / slider /
+    // 翻转 controls only become enabled while clipping is on.
+    document.querySelectorAll('.viz-clip-toggle').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const slot = btn.dataset.slot || 'a';
+        const next = !btn.classList.contains('active');
+        this._vizSetClipEnabledUI(slot, next);
+        this._vizQueueClip(slot, {enabled: next});
+      });
+    });
+
+    ['a', 'b'].forEach(slot => {
+      const slider = document.getElementById(`viz-clip-slider-${slot}`);
+      if (slider) {
+        slider.addEventListener('input', (e) => {
+          const pos = parseInt(e.target.value, 10) / 1000;
+          this._vizUpdateClipLabel(slot, pos);
+          this._vizQueueClip(slot, {position: pos});
+        });
+      }
+    });
+
     document.getElementById('viz-compare-toggle')?.addEventListener('click', async () => {
       if (this._viz.compareLocked) {
         this._viz.compareMode = true;
@@ -5667,23 +5893,7 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
         return;
       }
       if (!enabled) {
-        this._vizStopPlayback('b');
-        if (this._viz.ws_b) {
-          try { this._viz.ws_b.close(); } catch (_) {}
-          this._viz.ws_b = null;
-        }
-        this._viz.info_b = null;
-        const emptyEl = document.getElementById('viz-empty-b');
-        if (emptyEl) {
-          emptyEl.style.display = '';
-          emptyEl.textContent = '';
-        }
-        const canvas = document.getElementById('viz-canvas-b');
-        if (canvas) {
-          const ctx = canvas.getContext('2d');
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
-        }
-        this._vizHideBoxplot();
+        this._vizTeardownSlotB();
       } else if (res && res.scene_b) {
         this._viz.info_b = res.scene_b;
         this._vizUpdateControls('b');
@@ -5692,13 +5902,15 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
       this._vizRenderSourceSummary();
     });
 
-    const syncBtn = document.getElementById('viz-sync-camera');
+    const syncBtn = document.getElementById('viz-sync-display');
     if (syncBtn) {
       syncBtn._on = false;
       syncBtn.addEventListener('click', () => {
         syncBtn._on = !syncBtn._on;
         syncBtn.classList.toggle('active', syncBtn._on);
-        this.apiPost('/api/viz/sync-camera', {enabled: syncBtn._on}).catch(() => {});
+        this._viz.syncDisplay = syncBtn._on;
+        this._vizApplySyncDisplayLock();
+        this.apiPost('/api/viz/sync-display', {enabled: syncBtn._on}).catch(() => {});
       });
     }
 
@@ -5741,26 +5953,126 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
       if (!canvas) return;
       canvas.addEventListener('contextmenu', e => e.preventDefault());
       canvas.addEventListener('mousedown', e => {
+        if (this._viz.elementSelectMode && this._viz.elementSelectTab === 'box' && !this._vizIsSyncLockedSlot(slot)) {
+          if (e.button === 0 && !e.shiftKey) {
+            e.preventDefault();
+            e.stopPropagation();
+            this._vizElementBoxStart(slot, e.clientX, e.clientY, 'add');
+            return;
+          }
+          if (e.button === 2) {
+            this._viz.elementRightClickCandidate = {
+              slot,
+              startClientX: e.clientX,
+              startClientY: e.clientY,
+              moved: false,
+            };
+            // Do not return: right-drag must keep the normal pan behavior.
+          }
+        }
+        // In probe mode a plain left-click pins the current hover card.
+        // Shift + left-click keeps the usual orbit-drag behavior so the
+        // user can reframe without leaving probe mode.
+        if (this._viz.probeMode && e.button === 0 && !e.shiftKey) {
+          e.preventDefault();
+          e.stopPropagation();
+          this._vizProbePinAt(slot, e.clientX, e.clientY);
+          return;
+        }
+        if (this._vizIsSyncLockedSlot(slot)) {
+          e.preventDefault();
+          return;
+        }
         this._viz.dragging = true;
         this._viz.dragSlot = slot;
         this._viz.lastX = e.clientX;
         this._viz.lastY = e.clientY;
         this._viz.dragButton = e.button;
       });
+      // Throttled hover-probe (Step 3b): only active while probe mode
+      // is on. The handler runs alongside the document-level orbit
+      // mousemove; while a right-button pan is in progress we suppress
+      // probe so the user can reframe without spamming pick requests.
+      canvas.addEventListener('mousemove', e => {
+        if (this._viz.elementSelectMode) {
+          if (this._viz.dragging || this._viz.elementBoxDrag) return;
+          this._vizProbeHoverThrottled(slot, e, { mode: this._vizProbeModeForSlot(slot) });
+          return;
+        }
+        if (!this._viz.probeMode) return;
+        if (this._viz.dragging) return;
+        this._vizProbeHoverThrottled(slot, e);
+      });
+      canvas.addEventListener('mouseleave', () => {
+        if (this._viz.probeMode || this._viz.elementSelectMode) this._vizProbeHideHover();
+      });
       canvas.addEventListener('wheel', e => {
         e.preventDefault();
+        if (this._vizIsSyncLockedSlot(slot)) return;
         const factor = e.deltaY < 0 ? 1.1 : 0.9;
         this._vizSendWs(slot, {action: 'zoom', factor});
       }, {passive: false});
     });
 
+    // Probe toolbar wiring (A only — B canvas reuses the same mode
+    // and state; per plan we keep one global toggle).
+    document.getElementById('viz-probe-toggle')?.addEventListener('click', () => {
+      this._vizProbeToggle();
+    });
+    document.querySelectorAll('.viz-probe-mode-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const kind = btn.dataset.probeMode || 'node';
+        this._vizProbeSetKind(kind);
+      });
+    });
+    document.getElementById('viz-probe-export')?.addEventListener('click', () => {
+      this._vizProbeExportCsv();
+    });
+    document.getElementById('viz-probe-compare')?.addEventListener('click', () => {
+      this._vizProbeOpenCompare();
+    });
+    document.getElementById('viz-probe-extrema')?.addEventListener('click', () => {
+      this._vizProbeRunExtrema();
+    });
+    document.getElementById('viz-probe-compare-close')?.addEventListener('click', () => this._vizProbeShowCompareModal(false));
+    document.getElementById('viz-probe-compare-backdrop')?.addEventListener('click', () => this._vizProbeShowCompareModal(false));
+    document.getElementById('viz-probe-compare-run')?.addEventListener('click', () => this._vizProbeRunCompare());
+    document.getElementById('viz-element-select-toggle')?.addEventListener('click', () => this._vizElementSelectionToggle());
+    document.getElementById('viz-element-panel-close')?.addEventListener('click', () => {
+      if (this._viz.elementSelectMode) this._vizElementSelectionToggle();
+    });
+    document.querySelectorAll('.viz-element-tab').forEach(btn => {
+      btn.addEventListener('click', () => this._vizElementSelectionSetTab(btn.dataset.elementTab || 'box'));
+    });
+    document.getElementById('viz-element-id-add')?.addEventListener('click', () => this._vizElementSelectionSelectIds());
+    document.querySelectorAll('[data-element-action]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const action = btn.dataset.elementAction || '';
+        if (action === 'hide') this._vizElementSelectionCommand('element_hide_selected');
+        else if (action === 'show-only') this._vizElementSelectionCommand('element_show_selected_only');
+        else if (action === 'undo') this._vizElementSelectionCommand('element_undo_hidden');
+        else if (action === 'restore') this._vizElementSelectionCommand('element_restore_all');
+      });
+    });
+
     document.addEventListener('mousemove', e => {
+      if (this._viz.elementBoxDrag) {
+        this._vizElementBoxUpdate(e.clientX, e.clientY);
+        return;
+      }
       if (!this._viz.dragging) return;
+      const rightCandidate = this._viz.elementRightClickCandidate;
+      if (rightCandidate) {
+        const moved = Math.abs(e.clientX - rightCandidate.startClientX) > 4
+          || Math.abs(e.clientY - rightCandidate.startClientY) > 4;
+        if (moved) rightCandidate.moved = true;
+      }
       const dx = e.clientX - this._viz.lastX;
       const dy = e.clientY - this._viz.lastY;
       this._viz.lastX = e.clientX;
       this._viz.lastY = e.clientY;
       const slot = this._viz.dragSlot || 'a';
+      if (this._vizIsSyncLockedSlot(slot)) return;
       if (this._viz.dragButton === 2) {
         this._vizSendWs(slot, {action: 'pan', dx, dy});
       } else {
@@ -5768,9 +6080,34 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
       }
     });
 
-    document.addEventListener('mouseup', () => {
+    document.addEventListener('mouseup', e => {
+      if (this._viz.elementBoxDrag) {
+        this._vizElementBoxFinish(e.clientX, e.clientY);
+        return;
+      }
+      const rightCandidate = this._viz.elementRightClickCandidate;
+      if (rightCandidate) {
+        this._viz.elementRightClickCandidate = null;
+        if (!rightCandidate.moved) {
+          this._vizSendWs(rightCandidate.slot, { action: 'element_selection_undo' });
+        }
+      }
       this._viz.dragging = false;
     });
+
+    const spaceConfirmCapture = e => {
+      if (!this._viz.elementSelectMode) return;
+      if (e.key !== ' ' && e.key !== 'Spacebar' && e.code !== 'Space') return;
+      const target = e.target;
+      const tag = String(target?.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select' || target?.isContentEditable) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+      if (e.type === 'keydown' && !e.repeat) this._vizElementSelectionConfirm();
+    };
+    document.addEventListener('keydown', spaceConfirmCapture, true);
+    document.addEventListener('keyup', spaceConfirmCapture, true);
   },
 
   async _vizEnsureModels() {
@@ -5918,7 +6255,17 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
     const picker = document.getElementById(`viz-source-picker-${slot}`);
     const current = document.getElementById(`viz-source-current-${slot}`);
     const currentText = document.getElementById(`viz-source-current-text-${slot}`);
+    const reselectBtn = document.getElementById(`viz-reselect-${slot}`);
     const state = this._vizGetSlotState(slot);
+    // When a slot transitions from "loaded" to "not loaded" (e.g. user
+    // clicks "重选MAT" or the MAT is unloaded), drop any pinned probe
+    // cards for that slot — they reference scene data that is about
+    // to disappear. ``_vizProbeClearForSlot`` is a no-op if probe is
+    // not active or there are no cards.
+    if (state.sourceLocked && !loaded && this._vizProbeClearForSlot) {
+      this._vizProbeClearForSlot(slot);
+      this._vizElementSelectionClearForSlot(slot);
+    }
     state.sourceLocked = !!loaded;
     if (picker) picker.style.display = loaded ? 'none' : 'inline-flex';
     if (current) current.style.display = loaded ? 'inline-flex' : 'none';
@@ -5928,11 +6275,26 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
       currentText.textContent = `${slot.toUpperCase()} · ${modelText} · ${this._vizBasename(state.matPath)}`;
       currentText.title = state.matPath || '';
     }
+    // Lock slot B's "重选MAT" while a validation MAT pair is active — both
+    // scenes come from the same embedded-ODB file, so reselecting B alone
+    // would silently break the A/B comparison semantics.
+    if (reselectBtn) {
+      const pairLocked = slot === 'b' && !!this._viz.compareLocked;
+      reselectBtn.disabled = pairLocked;
+      reselectBtn.title = pairLocked
+        ? '当前 A/B 来自同一个 validation MAT，B 不能单独重选'
+        : '重新选择 MAT 结果';
+    }
     if (toolbar) {
       Array.from(toolbar.children).forEach((child, index) => {
         if (index === 0) return;
         child.style.display = loaded ? '' : 'none';
       });
+    }
+    if (slot === 'a') {
+      const commonToolbar = document.getElementById('viz-common-toolbar');
+      if (commonToolbar) commonToolbar.style.display = loaded ? 'flex' : 'none';
+      if (!loaded && this._viz.elementSelectMode) this._vizElementSelectionToggle();
     }
   },
 
@@ -5981,11 +6343,22 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
     state.family = '';
     state.quantityValue = '';
     if (slot === 'a') {
-      this._viz.info_a = res.validation_compare && res.scene_a ? res.scene_a : res;
+      const isValidationPair = !!(res.validation_compare && res.scene_b);
+      // When the backend reports that a validation lock was just released
+      // (user is loading a regular MAT on top of a previous validation
+      // pair), tear down scene B before installing new A info so the UI
+      // matches the backend's now-single-pane state.
+      const exitingValidation = !isValidationPair && (
+        res.unlocked_validation || (this._viz.compareLocked && !res.compare_locked)
+      );
+      if (exitingValidation) {
+        this._vizTeardownSlotB();
+      }
+      this._viz.info_a = isValidationPair ? res.scene_a : res;
       this._viz.compareLocked = !!res.compare_locked;
       this._vizUpdateControls('a');
       this._vizConnectWs('a');
-      if (res.validation_compare && res.scene_b) {
+      if (isValidationPair) {
         this._viz.info_b = res.scene_b;
         this._viz.compareMode = true;
         this._vizShowCompare(true);
@@ -6029,7 +6402,7 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
     const sort = this._viz.fieldSortKey || 'default';
     const dir = this._viz.fieldSortDir === 'desc' ? -1 : 1;
     const arr = [...(fields || [])];
-    const text = item => String(item.key || '').toLowerCase();
+    const text = item => String(item.display_key || item.key || '').toLowerCase();
     const orderMap = (values, value) => {
       const idx = values.indexOf(String(value || ''));
       return idx < 0 ? values.length : idx;
@@ -6134,19 +6507,23 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
       const scalarNote = this._vizFieldScalarNote(item);
       const symbol = String(item.symbol || '').trim();
       const formula = String(item.formula || '').trim();
+      const description = String(item.description || '').trim();
       const symbolHtml = symbol ? `\\(${UI.escapeHtml(symbol)}\\)` : '-';
+      const displayKey = String(item.display_key || item.key || '').trim();
+      const mainTitle = [item.label || item.key, item.key && item.key !== displayKey ? `MAT key: ${item.key}` : '', description].filter(Boolean).join('\n');
+      const symbolTitle = [formula || symbol, description].filter(Boolean).join('\n');
       return `
         <label class="viz-field-table-row">
           <input type="checkbox" class="viz-field-check" value="${UI.escapeAttr(item.key)}" ${checked}>
-          <span class="viz-field-main">
-            <span class="viz-field-name">${UI.escapeHtml(item.key)}</span>
+          <span class="viz-field-main" title="${UI.escapeAttr(mainTitle)}">
+            <span class="viz-field-name">${UI.escapeHtml(displayKey || item.key)}</span>
             <span class="viz-field-label">${UI.escapeHtml(item.label || item.key)}</span>
           </span>
           <span class="viz-field-cell">${UI.escapeHtml(item.location || 'unknown')}</span>
           <span class="viz-field-cell">${UI.escapeHtml(item.frames || 'single')}</span>
           <span class="viz-field-cell">${UI.escapeHtml(item.tensor_kind || 'components')}</span>
           <span class="viz-field-cell">${UI.escapeHtml(family)}</span>
-          <span class="viz-field-symbol" title="${UI.escapeAttr(formula || symbol)}">${symbolHtml}</span>
+          <span class="viz-field-symbol" title="${UI.escapeAttr(symbolTitle)}">${symbolHtml}</span>
           <span class="viz-field-shape">${UI.escapeHtml(shape)}</span>
           <span class="viz-field-note">${UI.escapeHtml(item.default_selected ? scalarNote : '可选')}</span>
         </label>`;
@@ -6159,6 +6536,13 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
 
   _vizFieldScalarNote(item) {
     const n = Number(item.n_components || 1);
+    const text = `${item.key || ''} ${item.label || ''} ${item.description || ''}`.toLowerCase();
+    if (text.includes('shell generalized stress') && n === 6) return 'components + SF/SM magnitudes';
+    if (text.includes('shell generalized strain') && n === 6) return 'components + GE/GK magnitudes';
+    if (this._vizIsShellDisplacementRotationField(item.key, item) && n === 6) return 'components + U/UR magnitudes';
+    if (this._vizIsShellForceMomentField(item.key, item) && n === 6) return 'components + F/M magnitudes';
+    if (this._vizIsShellGeneralizedSubfield(item.key, item) && n === 3) return 'components + Magnitude';
+    if (text.includes('plastic strain')) return n > 1 ? `components + Magnitude (${n})` : 'scalar';
     if (item.tensor_kind === 'stress_voigt') return `components + Mises (${n})`;
     if (item.tensor_kind === 'strain_voigt') return `components + Equivalent (${n})`;
     if (item.tensor_kind === 'vector') return n > 1 ? `components + Magnitude (${n})` : 'components + Magnitude';
@@ -6228,16 +6612,54 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
     await this._vizInspectSelectedMat(slot, browseRes.path);
   },
 
-  _vizSetStatus(text) {
+  _vizSetStatus(text, tone = '') {
     const statusEl = document.getElementById('viz-status-text');
     if (statusEl) statusEl.textContent = text;
+    const bar = document.getElementById('viz-status-bar');
+    if (bar) {
+      bar.classList.toggle('viz-status-alert', tone === 'alert');
+    }
+  },
+
+  _vizTeardownSlotB() {
+    // Centralized teardown for scene B (used by the 双栏对比 toggle and by
+    // reloading slot A with a non-validation MAT after a validation pair).
+    this._vizStopPlayback('b');
+    if (this._viz.ws_b) {
+      try { this._viz.ws_b.close(); } catch (_) {}
+      this._viz.ws_b = null;
+    }
+    this._viz.info_b = null;
+    this._viz.compareMode = false;
+    this._viz.compareLocked = false;
+    this._vizShowCompare(false);
+    this._vizSetSlotLoadedState('b', false);
+    const stateB = this._vizGetSlotState('b');
+    stateB.matPath = '';
+    stateB.selectedFields = [];
+    stateB.family = '';
+    stateB.quantityValue = '';
+    stateB.modelKey = '';
+    const emptyEl = document.getElementById('viz-empty-b');
+    if (emptyEl) {
+      emptyEl.style.display = '';
+      emptyEl.textContent = '';
+    }
+    const canvas = document.getElementById('viz-canvas-b');
+    if (canvas) {
+      const ctx = canvas.getContext('2d');
+      if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+    this._vizHideBoxplot();
+    this._vizRenderSourceSummary();
+    this._vizRefreshCompareButtons();
   },
 
   _vizShowCompare(show) {
     const panelB = document.getElementById('viz-panel-b');
     const toolbarB = document.getElementById('viz-toolbar-b');
     const btn = document.getElementById('viz-compare-toggle');
-    const syncBtn = document.getElementById('viz-sync-camera');
+    const syncBtn = document.getElementById('viz-sync-display');
     const diffBtn = document.getElementById('viz-diff-run');
     const optionWraps = [
       document.getElementById('viz-diff-absolute-wrap'),
@@ -6253,16 +6675,20 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
       btn.disabled = locked;
       btn.title = locked ? 'Validation 结果固定使用 JAX / ABAQUS 双栏对比' : '切换 A/B 双栏对比';
     }
-    if (syncBtn) syncBtn.style.display = show ? '' : 'none';
-    if (diffBtn) diffBtn.style.display = show ? '' : 'none';
-    if (boxplotBtn) boxplotBtn.style.display = show ? '' : 'none';
-    if (saveBtn) saveBtn.style.display = show ? '' : 'none';
     optionWraps.forEach(wrap => {
-      if (wrap) wrap.style.display = show ? 'inline-flex' : 'none';
+      if (wrap) wrap.style.display = 'inline-flex';
     });
     if (!show) {
       this._viz.diffPayload = null;
       this._vizHideBoxplot();
+      // Leaving compare mode also drops sync_display; reset the button
+      // visual state and unfreeze any locked B controls.
+      if (syncBtn) {
+        syncBtn._on = false;
+        syncBtn.classList.remove('active');
+      }
+      this._viz.syncDisplay = false;
+      this._vizApplySyncDisplayLock();
     }
     this._vizUpdatePanelLabels();
     this._vizRefreshCompareButtons();
@@ -6270,7 +6696,7 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
   },
 
   _vizRefreshCompareButtons() {
-    const syncBtn = document.getElementById('viz-sync-camera');
+    const syncBtn = document.getElementById('viz-sync-display');
     const absoluteCheck = document.getElementById('viz-diff-absolute');
     const boxplotBtn = document.getElementById('viz-diff-boxplot');
     const saveBtn = document.getElementById('viz-diff-save');
@@ -6285,6 +6711,54 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
     if (boxplotBtn) boxplotBtn.disabled = !hasDiff;
     if (saveBtn) saveBtn.disabled = !hasDiff;
     if (diffBtn) diffBtn.disabled = !hasBoth;
+    this._vizApplySyncDisplayLock();
+  },
+
+  _vizApplySyncDisplayLock() {
+    // Freeze only B controls governed by sync_display: frame, view/camera
+    // and clipping. B field / legend controls remain editable so users can
+    // compare unlike quantities.
+    const toolbarB = document.getElementById('viz-toolbar-b');
+    const panelB = document.getElementById('viz-panel-b');
+    const on = !!(this._viz && this._viz.syncDisplay && this._viz.compareMode);
+    if (toolbarB) toolbarB.classList.toggle('viz-sync-locked', on);
+    if (panelB) panelB.classList.toggle('viz-sync-locked', on);
+    if (toolbarB) {
+      const controls = toolbarB.querySelectorAll(
+        '.viz-view-btn, .viz-clip-group button, .viz-clip-group input',
+      );
+      controls.forEach((el) => {
+        if (el.tagName === 'LABEL') {
+          el.classList.toggle('viz-control-locked', on);
+          const inner = el.querySelector('input');
+          if (inner) {
+            if (on) {
+              if (inner.dataset.syncPrevDisabled === undefined) {
+                inner.dataset.syncPrevDisabled = inner.disabled ? '1' : '0';
+              }
+              inner.disabled = true;
+            } else if (inner.dataset.syncPrevDisabled !== undefined) {
+              inner.disabled = inner.dataset.syncPrevDisabled === '1';
+              delete inner.dataset.syncPrevDisabled;
+            }
+          }
+          return;
+        }
+        if (on) {
+          if (el.dataset.syncPrevDisabled === undefined) {
+            el.dataset.syncPrevDisabled = el.disabled ? '1' : '0';
+          }
+          el.disabled = true;
+        } else if (el.dataset.syncPrevDisabled !== undefined) {
+          el.disabled = el.dataset.syncPrevDisabled === '1';
+          delete el.dataset.syncPrevDisabled;
+        }
+      });
+    }
+  },
+
+  _vizIsSyncLockedSlot(slot) {
+    return slot === 'b' && !!(this._viz && this._viz.syncDisplay && this._viz.compareMode);
   },
 
   _vizHasDiffField() {
@@ -6325,18 +6799,221 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
     return parts[parts.length - 1] || text;
   },
 
+  _vizIsShellPeeqKey(key, meta = {}) {
+    const raw = String(key || '');
+    const text = `${raw} ${meta.label || ''} ${meta.description || ''}`.toLowerCase();
+    if (!text.includes('peeq')) return false;
+    return raw === 'gauss_peeq'
+      || raw === 'frame_gauss_peeq'
+      || raw.includes('shell_layer_peeq')
+      || raw.includes('validation_jax_PEEQ')
+      || raw.includes('validation_abaqus_PEEQ')
+      || text.includes('through-thickness')
+      || text.includes('sneg')
+      || text.includes('spos');
+  },
+
+  _vizPeeqGroupOptionLabel(key, meta = {}) {
+    const text = `${key || ''} ${meta.label || ''}`.toLowerCase();
+    if (text.includes('spos') || text.includes('peeq_pos') || /\bpos\b/.test(text)) return 'Pos';
+    if (text.includes('sneg') || text.includes('peeq_neg') || /\bneg\b/.test(text)) return 'Neg';
+    return 'Max';
+  },
+
+  _vizPeeqGroupSort(label) {
+    return { Pos: 0, Neg: 1, Max: 2 }[label] ?? 9;
+  },
+
+  _vizShellPeeqGroupMeta(fieldMeta, keys) {
+    const maxKey = keys.find(key => this._vizPeeqGroupOptionLabel(key, fieldMeta[key]) === 'Max') || keys[0];
+    const meta = fieldMeta[maxKey] || {};
+    const baseDescription = meta.description || 'Equivalent plastic strain for shell section points.';
+    const optionHint = 'Use the quantity menu to choose Pos, Neg, or Max through the exposed SNEG/SPOS surfaces.';
+    return {
+      ...meta,
+      label: 'PEEQ',
+      symbol: meta.symbol || '\\bar{\\varepsilon}^{p}',
+      formula: meta.formula || '\\bar{\\varepsilon}^{p}=\\{PEEQ_{SPOS},PEEQ_{SNEG},\\max_z PEEQ\\}',
+      description: baseDescription.includes('Use the quantity menu') ? baseDescription : `${baseDescription} ${optionHint}`,
+    };
+  },
+
+  _vizIsShellSplitMagnitudeKey(key) {
+    const raw = String(key || '').toLowerCase();
+    return raw.includes('sgen_sf_magnitude')
+      || raw.includes('sgen_sm_magnitude')
+      || raw.includes('egen_ge_magnitude')
+      || raw.includes('egen_gk_magnitude')
+      || raw.includes('u_trans_magnitude')
+      || raw.includes('u_rot_magnitude')
+      || raw.includes('nforc_force_magnitude')
+      || raw.includes('nforc_moment_magnitude')
+      || raw.includes('ceq_force_magnitude')
+      || raw.includes('ceq_moment_magnitude')
+      || raw.includes('ferror_force_magnitude')
+      || raw.includes('ferror_moment_magnitude');
+  },
+
+  _vizIsShellGeneralizedSubfield(key, meta = {}) {
+    const text = `${key || ''} ${meta.label || ''} ${meta.description || ''}`.toLowerCase();
+    return text.includes('shakedown_sf_')
+      || text.includes('shakedown_sm_')
+      || text.includes('shakedown_ge_')
+      || text.includes('shakedown_gk_')
+      || text.includes('rsdms_sf_')
+      || text.includes('rsdms_sm_')
+      || text.includes('rsdms_ge_')
+      || text.includes('rsdms_gk_')
+      || text.includes('generalized_residual_sf')
+      || text.includes('generalized_residual_sm')
+      || text.includes('generalized_total_sf')
+      || text.includes('generalized_total_sm')
+      || text.includes('generalized_residual_ge')
+      || text.includes('generalized_residual_gk')
+      || text.includes('generalized_total_ge')
+      || text.includes('generalized_total_gk');
+  },
+
+  _vizIsShellDisplacementRotationField(key, meta = {}) {
+    const nComp = Number(meta.n_components || 1);
+    const text = `${key || ''} ${meta.label || ''} ${meta.description || ''}`.toLowerCase();
+    return nComp === 6 && (
+      text.includes('shell displacement/rotation')
+      || text.includes('shell displacement')
+      || String(key || '').toLowerCase() === 'shell_u_nodal'
+      || String(key || '').toLowerCase() === 'frame_u'
+      || String(key || '').toLowerCase() === 'validation_jax_u'
+      || String(key || '').toLowerCase() === 'validation_abaqus_u'
+    );
+  },
+
+  _vizIsShellForceMomentField(key, meta = {}) {
+    const nComp = Number(meta.n_components || 1);
+    const lower = String(key || '').toLowerCase();
+    const text = `${lower} ${meta.label || ''} ${meta.description || ''}`.toLowerCase();
+    return nComp === 6 && (
+      text.includes('shell generalized nodal force')
+      || text.includes('force/moment')
+      || lower === 'shell_gen_internal_force'
+      || lower === 'frame_nforc'
+      || lower === 'frame_shell_f_drill'
+      || lower === 'validation_jax_nforc'
+      || lower === 'validation_abaqus_nforc'
+      || lower === 'rsdms_nforc'
+      || lower === 'rsdms_ceq'
+      || lower === 'rsdms_ferror'
+      || lower === 'shakedown_equality_violation'
+    );
+  },
+
+  _vizIsShellGeneralizedField(key, meta = {}) {
+    const nComp = Number(meta.n_components || 1);
+    const text = `${key || ''} ${meta.label || ''} ${meta.description || ''}`.toLowerCase();
+    return nComp === 6 && (
+      text.includes('shell generalized stress')
+      || text.includes('shell generalized strain')
+      || text.includes('sgen shell generalized')
+      || text.includes('egen shell generalized')
+    );
+  },
+
+  _vizIsShellSplitVectorField(key, meta = {}) {
+    const nComp = Number(meta.n_components || 1);
+    const text = `${key || ''} ${meta.label || ''} ${meta.description || ''}`.toLowerCase();
+    return nComp === 6 && (
+      this._vizIsShellGeneralizedField(key, meta)
+      || this._vizIsShellDisplacementRotationField(key, meta)
+      || this._vizIsShellForceMomentField(key, meta)
+    );
+  },
+
+  _vizShellSplitMagnitudeOptions(key, fieldMeta = {}) {
+    const raw = String(key || '');
+    const lower = raw.toLowerCase();
+    const meta = fieldMeta[key] || {};
+    const text = `${lower} ${meta.label || ''} ${meta.description || ''}`.toLowerCase();
+    let pairs = [];
+    if (lower === 'frame_gauss_stress' || lower === 'gauss_stress' || lower === 'shell_generalized_stress' || text.includes('shell generalized stress')) {
+      let prefix = lower === 'shell_generalized_stress' ? 'shell' : (lower === 'gauss_stress' ? 'gauss_shell' : 'frame_shell');
+      if (lower === 'validation_jax_s') prefix = 'validation_jax';
+      if (lower === 'validation_abaqus_s') prefix = 'validation_abaqus';
+      pairs = [
+        [`${prefix}_sgen_sf_magnitude`, 'SF magnitude'],
+        [`${prefix}_sgen_sm_magnitude`, 'SM magnitude'],
+      ];
+    } else if (lower === 'frame_gauss_strain' || lower === 'gauss_strain' || lower === 'shell_generalized_strain' || text.includes('shell generalized strain')) {
+      let prefix = lower === 'shell_generalized_strain' ? 'shell' : (lower === 'gauss_strain' ? 'gauss_shell' : 'frame_shell');
+      if (lower === 'validation_jax_e') prefix = 'validation_jax';
+      if (lower === 'validation_abaqus_e') prefix = 'validation_abaqus';
+      pairs = [
+        [`${prefix}_egen_ge_magnitude`, 'GE magnitude'],
+        [`${prefix}_egen_gk_magnitude`, 'GK magnitude'],
+      ];
+    } else if (this._vizIsShellDisplacementRotationField(key, meta)) {
+      let prefix = lower === 'shell_u_nodal' ? 'shell' : 'frame_shell';
+      if (lower === 'validation_jax_u') prefix = 'validation_jax';
+      if (lower === 'validation_abaqus_u') prefix = 'validation_abaqus';
+      pairs = [
+        [`${prefix}_u_trans_magnitude`, 'U magnitude'],
+        [`${prefix}_u_rot_magnitude`, 'UR magnitude'],
+      ];
+    } else if (this._vizIsShellForceMomentField(key, meta)) {
+      let prefix = ({
+        shell_gen_internal_force: 'shell_nforc',
+        frame_nforc: 'frame_shell_nforc',
+        frame_shell_f_drill: 'frame_shell_f_drill',
+        validation_jax_nforc: 'validation_jax_nforc',
+        validation_abaqus_nforc: 'validation_abaqus_nforc',
+        rsdms_nforc: 'rsdms_nforc',
+        rsdms_ceq: 'rsdms_ceq',
+        rsdms_ferror: 'rsdms_ferror',
+        shakedown_equality_violation: 'shakedown_ceq',
+      })[lower] || lower;
+      pairs = [
+        [`${prefix}_force_magnitude`, 'F magnitude'],
+        [`${prefix}_moment_magnitude`, 'M magnitude'],
+      ];
+    }
+    return pairs
+      .filter(([derivedKey]) => fieldMeta[derivedKey])
+      .map(([derivedKey, label]) => ({ key: derivedKey, label, meta: fieldMeta[derivedKey] || {} }));
+  },
+
   _vizClassifyFieldFamily(key, meta = {}) {
-    const text = `${key} ${meta.label || ''}`.toLowerCase();
+    const keyLower = String(key || '').toLowerCase();
+    const text = `${keyLower} ${meta.label || ''} ${meta.description || ''}`.toLowerCase();
+    if (keyLower === 'shakedown_inequality_multiplier') return 'other';
+    if (this._vizIsShellGeneralizedSubfield(key, meta)) {
+      if (text.includes('ge_') || text.includes('gk_') || /\bge\b/.test(text) || /\bgk\b/.test(text)) return 'strain';
+      return 'stress';
+    }
+    // NFORC / reaction / internal-force checks must come BEFORE the
+    // broad 'stress' substring check — NFORC fields like
+    // ``solid_nforc_nodal`` carry a description such as "Nodal force
+    // due to stress, compared against ABAQUS NFORC output", which
+    // otherwise (mis-)matches the 'stress' rule first and ends up
+    // showing Mises / S11 / S22 / S12 instead of NFORC1/2/3.
+    if (
+      keyLower.includes('nforc')
+      || keyLower.includes('reaction')
+      || keyLower.includes('internal_force')
+      || text.includes('nodal force')
+      || text.includes('reaction')
+      || text.includes('internal force')
+      || text.includes('nforc')
+    ) {
+      return 'reaction';
+    }
     if (text.includes('stress')) return 'stress';
     if (text.includes('strain') || text.includes('peeq')) return 'strain';
     if (/(^u$|^frame_u$|^elastic_u$|^solid_u_nodal$|_u_|displacement)/.test(text)) return 'displacement';
-    if (text.includes('reaction') || text.includes('internal force') || text.includes('nforc') || text.includes('force')) return 'reaction';
+    if (text.includes('force')) return 'reaction';
     return 'other';
   },
 
   _vizComponentLabels(family, meta = {}, key = '') {
     const nComp = Number(meta.n_components || 1);
-    const text = `${key} ${meta.label || ''}`.toLowerCase();
+    const text = `${key} ${meta.label || ''} ${meta.description || ''}`.toLowerCase();
     if (nComp <= 1) return [];
     if (text.includes('shell generalized stress') && nComp === 6) {
       return ['SF11', 'SF22', 'SF12', 'SM11', 'SM22', 'SM12'];
@@ -6344,11 +7021,16 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
     if (text.includes('shell generalized strain') && nComp === 6) {
       return ['GE11', 'GE22', 'GE12', 'GK11', 'GK22', 'GK12'];
     }
-    if (text.includes('shell displacement') && nComp === 6) {
+    if (this._vizIsShellDisplacementRotationField(key, meta)) {
       return ['U1', 'U2', 'U3', 'UR1', 'UR2', 'UR3'];
     }
-    if (text.includes('shell generalized nforc') && nComp === 6) {
+    if (this._vizIsShellForceMomentField(key, meta)) {
       return ['F1', 'F2', 'F3', 'M1', 'M2', 'M3'];
+    }
+    if (text.includes('plastic strain')) {
+      if (nComp === 4) return ['PE11', 'PE22', 'PE12', 'PE33'];
+      if (nComp === 6) return ['PE11', 'PE22', 'PE33', 'PE12', 'PE13', 'PE23'];
+      if (nComp === 3) return ['PE11', 'PE22', 'PE12'];
     }
     if (text.includes('equality_violation') || text.includes('self-equilibrium')) {
       return ['1', '2', '3'].slice(0, nComp).concat(Array.from({ length: Math.max(0, nComp - 3) }, (_, i) => `${i + 4}`));
@@ -6358,6 +7040,12 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
     }
     if (text.includes('shakedown_sm_') || text.includes('rsdms_sm_') || text.includes('generalized_residual_sm') || text.includes('generalized_total_sm')) {
       return ['SM11', 'SM22', 'SM12'].slice(0, nComp);
+    }
+    if (text.includes('shakedown_ge_') || text.includes('rsdms_ge_') || text.includes('generalized_residual_ge') || text.includes('generalized_total_ge')) {
+      return ['GE11', 'GE22', 'GE12'].slice(0, nComp);
+    }
+    if (text.includes('shakedown_gk_') || text.includes('rsdms_gk_') || text.includes('generalized_residual_gk') || text.includes('generalized_total_gk')) {
+      return ['GK11', 'GK22', 'GK12'].slice(0, nComp);
     }
     if (family === 'stress') {
       if (nComp === 6) return ['S11', 'S22', 'S33', 'S12', 'S13', 'S23'];
@@ -6372,7 +7060,15 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
       return labels.slice(0, nComp).concat(Array.from({ length: Math.max(0, nComp - labels.length) }, (_, i) => `${i + labels.length + 1}`));
     }
     if (family === 'reaction') {
-      const labels = text.includes('validation_') ? ['NFORC1', 'NFORC2', 'NFORC3'] : ['1', '2', '3'];
+      // Use the canonical NFORC1/NFORC2/NFORC3 labels for every nodal-
+      // force field — solid (``solid_nforc_nodal``), frame
+      // (``frame_nforc``), validation (``validation_jax_NFORC``,
+      // ``validation_abaqus_NFORC``) and shell (where the 6-comp
+      // generalized force/moment is already handled by the dedicated
+      // shell branch above). Falling back to plain ``'1','2','3'``
+      // for solid models made it impossible to tell NFORC1 from a
+      // stress component visually.
+      const labels = ['NFORC1', 'NFORC2', 'NFORC3'];
       return labels.slice(0, nComp).concat(Array.from({ length: Math.max(0, nComp - labels.length) }, (_, i) => `${i + labels.length + 1}`));
     }
     return Array.from({ length: nComp }, (_, i) => `${i + 1}`);
@@ -6390,28 +7086,60 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
   },
 
   _vizVariableCode(key, meta = {}) {
-    const text = `${key} ${meta.label || ''}`.toLowerCase();
+    const lower = String(key || '').toLowerCase();
+    const text = `${key} ${meta.label || ''} ${meta.description || ''}`.toLowerCase();
+    if (lower === 'shakedown_inequality_multiplier' || text.includes('lagrange multiplier')) return 'Lambda';
     if (text.includes('viz_diff') || /\bdiff\b/.test(text)) return 'Diff';
+    if (lower.includes('xs_path') || text.includes('path effective excess')) return 'XS_path';
+    if (lower.includes('rsdms_xs') || lower.includes('rsdm_xs') || text.includes('excess stress')) return 'XS';
     if (text.includes('cineq') || text.includes('inequality_violation')) return 'CInEQ';
     if (text.includes('equality_violation') || text.includes('self-equilibrium')) return 'CEQ';
-    if (text.includes('generalized_residual_sf') || text.includes('generalized_total_sf') || text.includes('shakedown_sf_') || text.includes('rsdms_sf_') || /\bsf\b/.test(text)) return 'SF';
-    if (text.includes('generalized_residual_sm') || text.includes('generalized_total_sm') || text.includes('shakedown_sm_') || text.includes('rsdms_sm_') || /\bsm\b/.test(text)) return 'SM';
-    if (text.includes('shakedown_phi') || text.includes('ilyushin_phi') || text.includes('yield function')) return 'Phi';
-    if (text.includes('peeq')) return 'PEEQ';
     if (text.includes('shell generalized stress')) return 'SGEN';
     if (text.includes('shell generalized strain')) return 'EGEN';
+    const shellGenCode = this._vizShellGeneralizedResultantCode(lower, text);
+    if (shellGenCode) return shellGenCode;
+    if (text.includes('shakedown_phi') || text.includes('ilyushin_phi') || text.includes('yield function')) return 'Phi';
+    if (text.includes('plastic strain') && !text.includes('peeq')) return 'PE';
+    if (text.includes('peeq')) return 'PEEQ';
     if (text.includes('residual_stress') || text.includes('residual stress')) return 'RS';
-    if (text.includes('force_error')) return 'FERR';
+    if (text.includes('force_error') || text.includes('ferror') || text.includes('force balance error')) return 'FERR';
+    if (lower === 'frame_shell_f_drill' || text.includes('fdrill') || text.includes('f_{drill}')) return 'FDRILL';
+    if (text.includes('reaction')) return 'RF';
+    if (text.includes('internal force') || text.includes('internal_force') || text.includes('nforc') || text.includes('force')) return 'NFORC';
     if (text.includes('stress')) return 'S';
     if (text.includes('strain')) return 'E';
     if (/(^u$|^frame_u$|^elastic_u$|^solid_u_nodal$|_u_|displacement)/.test(text)) return 'U';
-    if (text.includes('reaction')) return 'RF';
-    if (text.includes('internal force') || text.includes('internal_force') || text.includes('nforc') || text.includes('force')) return 'NFORC';
     return String(key || 'VAR').replace(/^shakedown_/, '').replace(/^frame_/, '').replace(/^gauss_/, '').toUpperCase();
   },
 
-  _vizShortFieldSource(key) {
-    return String(key || '')
+  _vizShellGeneralizedResultantCode(lower, text) {
+    const isResidual = lower.includes('_res') || text.includes('residual') || text.includes('rho');
+    const isTotal = lower.includes('_tot') || text.includes('total');
+    const suffix = isTotal ? 'T' : (isResidual ? 'R' : '');
+    if (text.includes('generalized_residual_sf') || text.includes('generalized_total_sf') || text.includes('shakedown_sf_') || text.includes('rsdms_sf_') || /\bsf\b/.test(text)) return suffix ? `SF${suffix}` : 'SF';
+    if (text.includes('generalized_residual_sm') || text.includes('generalized_total_sm') || text.includes('shakedown_sm_') || text.includes('rsdms_sm_') || /\bsm\b/.test(text)) return suffix ? `SM${suffix}` : 'SM';
+    if (text.includes('generalized_residual_ge') || text.includes('generalized_total_ge') || text.includes('shakedown_ge_') || text.includes('rsdms_ge_') || /\bge\b/.test(text)) return suffix ? `GE${suffix}` : 'GE';
+    if (text.includes('generalized_residual_gk') || text.includes('generalized_total_gk') || text.includes('shakedown_gk_') || text.includes('rsdms_gk_') || /\bgk\b/.test(text)) return suffix ? `GK${suffix}` : 'GK';
+    return '';
+  },
+
+  _vizShortFieldSource(key, meta = {}) {
+    const raw = String(key || '');
+    const text = `${raw} ${meta.label || ''} ${meta.description || ''}`.toLowerCase();
+    if (text.includes('through-thickness max')) return 'through-thickness max';
+    if (raw === 'frame_gauss_peeq' || raw === 'gauss_peeq') return 'through-thickness max';
+    if (text.includes('sneg')) return 'SNEG surface';
+    if (text.includes('spos')) return 'SPOS surface';
+    if (text.includes('plastic strain')) return 'plastic strain';
+    if (text.includes('generalized stress') || raw === 'frame_gauss_stress') return 'generalized [SF, SM]';
+    if (text.includes('generalized strain') || raw === 'frame_gauss_strain') return 'generalized [GE, GK]';
+    if (text.includes('force balance error') || raw === 'frame_force_error' || raw.toLowerCase() === 'rsdms_ferror') return 'free DOF balance';
+    if (raw === 'frame_shell_f_drill') return 'drilling force';
+    if (text.includes('displacement/rotation') || raw === 'frame_u') return 'translation/rotation';
+    if (text.includes('generalized nodal force') || raw === 'frame_nforc') return 'force/moment';
+    if (this._vizIsShellGeneralizedSubfield(raw, meta)) return 'shell generalized';
+    if (this._vizIsShellForceMomentField(raw, meta)) return 'force/moment';
+    return raw
       .replace(/^shakedown_/, '')
       .replace(/^frame_/, '')
       .replace(/^gauss_/, '')
@@ -6420,9 +7148,21 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
       .replace(/_/g, ' ');
   },
 
+  _vizVariableDisplayLabel(code, key, meta = {}, count = 1) {
+    if (/^(SF|SM|GE|GK)[RT]$/.test(code)) {
+      const state = code.endsWith('T') ? 'total' : 'rho';
+      if (count > 1) return `${code} (${state}; ${this._vizShortFieldSource(key, meta)})`;
+      return `${code} (${state})`;
+    }
+    return count > 1 ? `${code} (${this._vizShortFieldSource(key, meta)})` : code;
+  },
+
   _vizVariableMapText(variable) {
     if (!variable) return '';
     const key = String(variable.key || '');
+    if (variable.code === 'Lambda') {
+      return `${variable.code} (${key}): yield inequality Lagrange multiplier`;
+    }
     if (variable.code === 'Diff') {
       return `${variable.code} (${key}): B-A displayed scalar`;
     }
@@ -6433,19 +7173,30 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
       return `${variable.code} (${key}): yield inequality violation`;
     }
     if (variable.code === 'SGEN') {
-      return `${variable.code} (${key}): shell generalized stress [SF, SM]`;
+      return `${variable.code} (${key}): ${variable.meta?.description || 'shell generalized stress [SF, SM]'}`;
     }
     if (variable.code === 'EGEN') {
-      return `${variable.code} (${key}): shell generalized strain [GE, GK]`;
+      return `${variable.code} (${key}): ${variable.meta?.description || 'shell generalized strain [GE, GK]'}`;
+    }
+    if (/^(SF|SM|GE|GK)[RT]$/.test(variable.code)) {
+      const kind = variable.code.endsWith('T') ? 'total' : 'residual/rho';
+      return `${variable.code} (${key}): ${kind} ${variable.meta?.description || 'shell generalized quantity'}`;
+    }
+    if (variable.meta?.description) {
+      return `${variable.code} (${key}): ${variable.meta.description}`;
     }
     return `${variable.code} (${key})`;
   },
 
   _vizScalarOptionLabel(family, key, meta = {}) {
-    const text = `${key} ${meta.label || ''}`.toLowerCase();
+    const text = `${key} ${meta.label || ''} ${meta.description || ''}`.toLowerCase();
+    if (String(key || '').toLowerCase() === 'shakedown_inequality_multiplier') return 'Value';
+    if (String(key || '').toLowerCase().includes('_xs_') || text.includes('excess stress')) return 'von Mises';
     if (text.includes('viz_diff') || /\bdiff\b/.test(text)) return 'Value';
     if (text.includes('peeq')) return 'PEEQ';
+    if (text.includes('plastic strain')) return 'Magnitude';
     if (text.includes('violation')) return 'Magnitude';
+    if (this._vizIsShellGeneralizedSubfield(key, meta)) return 'Magnitude';
     if (text.includes('shell generalized stress') || text.includes('shell generalized strain')) return 'Magnitude';
     if (family === 'stress') return 'Mises';
     if (family === 'strain') return 'Equivalent';
@@ -6455,7 +7206,9 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
   },
 
   _vizEquivalentLabel(family, key, meta = {}) {
-    const text = `${key} ${meta.label || ''}`.toLowerCase();
+    const text = `${key} ${meta.label || ''} ${meta.description || ''}`.toLowerCase();
+    if (text.includes('plastic strain')) return 'Magnitude';
+    if (this._vizIsShellGeneralizedSubfield(key, meta)) return 'Magnitude';
     if (text.includes('shell generalized stress') || text.includes('shell generalized strain')) return 'Magnitude';
     if (family === 'stress') return 'Mises';
     if (family === 'strain') return 'Equivalent';
@@ -6493,28 +7246,84 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
     const fieldMeta = info?.field_meta || {};
     const orderedKeys = Array.isArray(info?.fields) && info.fields.length ? info.fields : Object.keys(fieldMeta);
     const visibleKeys = orderedKeys.filter(key => !String(key).startsWith('derived_'));
-    const keys = visibleKeys.length ? visibleKeys : orderedKeys;
+    let keys = visibleKeys.length ? visibleKeys : orderedKeys;
+    // Probe-mode field filter (Step 3a): the toolbar dropdown only
+    // exposes fields whose location matches the active probe mode, so
+    // any subsequent ``set_field`` cannot land on a field the picker
+    // would silently refuse. If the filter would empty the catalog
+    // (unusual MAT without any node/gauss field), keep the unfiltered
+    // list so the UI does not lock up.
+    if (this._viz?.probeMode) {
+      const kind = this._viz.probeKind || 'node';
+      const allowed = kind === 'node'
+        ? new Set(['node'])
+        : new Set(['gauss', 'element']);
+      const filtered = keys.filter(k =>
+        allowed.has(String(fieldMeta[k]?.location || '').toLowerCase())
+      );
+      if (filtered.length) keys = filtered;
+    }
+    const splitMagnitudeKeys = new Set(keys.filter(key => this._vizIsShellSplitMagnitudeKey(key)));
+    const peeqKeys = keys.filter(key => this._vizIsShellPeeqKey(key, fieldMeta[key]));
+    const groupPeeq = peeqKeys.length > 1 && peeqKeys.some(key => {
+      const raw = String(key || '');
+      return raw.includes('shell_layer_peeq')
+        || raw.includes('validation_jax_PEEQ')
+        || raw.includes('validation_abaqus_PEEQ');
+    });
+    const peeqKeySet = new Set(groupPeeq ? peeqKeys : []);
+    const peeqGroupId = '__shell_peeq__';
     const quantitiesByFamily = {};
     const variables = [];
     const codeCounts = {};
     keys.forEach(key => {
+      if (splitMagnitudeKeys.has(key) || peeqKeySet.has(key)) return;
       const meta = fieldMeta[key];
       if (!meta) return;
       const code = this._vizVariableCode(key, meta);
       codeCounts[code] = (codeCounts[code] || 0) + 1;
     });
+    if (groupPeeq) codeCounts.PEEQ = 1;
     const pushUnique = (variableKey, option) => {
       if (!quantitiesByFamily[variableKey]) quantitiesByFamily[variableKey] = [];
       if (!quantitiesByFamily[variableKey].some(item => item.value === option.value)) {
         quantitiesByFamily[variableKey].push(option);
       }
     };
+    let peeqInserted = false;
     keys.forEach(key => {
+      if (splitMagnitudeKeys.has(key)) return;
+      if (peeqKeySet.has(key)) {
+        if (peeqInserted) return;
+        peeqInserted = true;
+        const meta = this._vizShellPeeqGroupMeta(fieldMeta, peeqKeys);
+        variables.push({ id: peeqGroupId, label: 'PEEQ', code: 'PEEQ', key: peeqKeys[0], meta });
+        const seenPeeqLabels = new Set();
+        peeqKeys
+          .map(peeqKey => {
+            const label = this._vizPeeqGroupOptionLabel(peeqKey, fieldMeta[peeqKey]);
+            return { key: peeqKey, label, meta: fieldMeta[peeqKey] || {} };
+          })
+          .sort((a, b) => this._vizPeeqGroupSort(a.label) - this._vizPeeqGroupSort(b.label))
+          .forEach(item => {
+            if (seenPeeqLabels.has(item.label)) return;
+            seenPeeqLabels.add(item.label);
+            pushUnique(peeqGroupId, {
+              family: peeqGroupId,
+              fieldFamily: 'strain',
+              key: item.key,
+              component: null,
+              label: item.label,
+              value: this._vizEncodeFieldChoice(item.key, null),
+            });
+          });
+        return;
+      }
       const meta = fieldMeta[key];
       if (!meta) return;
       const family = this._vizClassifyFieldFamily(key, meta);
       const code = this._vizVariableCode(key, meta);
-      const label = codeCounts[code] > 1 ? `${code} (${this._vizShortFieldSource(key)})` : code;
+      const label = this._vizVariableDisplayLabel(code, key, meta, codeCounts[code] || 1);
       variables.push({ id: key, label, code, key, meta });
       const nComp = Number(meta.n_components || 1);
       if (nComp <= 1) {
@@ -6528,14 +7337,29 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
         });
         return;
       }
-      pushUnique(key, {
-        family: key,
-        fieldFamily: family,
-        key,
-        component: null,
-        label: this._vizEquivalentLabel(family, key, meta),
-        value: this._vizEncodeFieldChoice(key, null),
-      });
+      const splitOptions = this._vizShellSplitMagnitudeOptions(key, fieldMeta);
+      const shellSplitVector = this._vizIsShellSplitVectorField(key, meta);
+      if (splitOptions.length) {
+        splitOptions.forEach(item => {
+          pushUnique(key, {
+            family: key,
+            fieldFamily: family,
+            key: item.key,
+            component: null,
+            label: item.label,
+            value: this._vizEncodeFieldChoice(item.key, null),
+          });
+        });
+      } else if (!shellSplitVector) {
+        pushUnique(key, {
+          family: key,
+          fieldFamily: family,
+          key,
+          component: null,
+          label: this._vizEquivalentLabel(family, key, meta),
+          value: this._vizEncodeFieldChoice(key, null),
+        });
+      }
       this._vizComponentLabels(family, meta, key).forEach((label, index) => {
         pushUnique(key, {
           family: key,
@@ -6601,6 +7425,17 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
     quantitySel.disabled = quantities.length === 0;
     if (quantityValue) quantitySel.value = quantityValue;
     const variable = catalog.families.find(item => item.id === family);
+    // The dedicated "validation_jax_S → …" inline pill was removed to keep
+    // the toolbar one row tall; we still hold the same information in the
+    // quantity-select's tooltip so power users can hover for the raw key.
+    if (quantitySel) {
+      const variableKey = variable?.key || '';
+      const mapText = this._vizVariableMapText(variable) || '';
+      const fieldLabel = variable?.meta?.label || '';
+      quantitySel.title = [fieldLabel, mapText, variableKey ? `key: ${variableKey}` : '']
+        .filter(Boolean)
+        .join('  ·  ');
+    }
     if (mapEl) {
       mapEl.textContent = this._vizVariableMapText(variable);
       mapEl.title = variable?.meta?.label || variable?.key || '';
@@ -6667,6 +7502,187 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
     overlay.innerHTML = rows.join('');
     overlay.style.display = 'block';
     this._typesetMath(overlay);
+    this._vizAttachMathCardDrag(slot);
+  },
+
+  // Make the floating math info card draggable inside its canvas panel.
+  // - Bound once per slot (idempotent guard via ``dataset.dragAttached``).
+  // - On mousedown anywhere on the card, switch to absolute left/top
+  //   positioning and follow the cursor until mouseup.
+  // - Clamps the final position so the card stays at least partially
+  //   visible inside the panel rectangle.
+  _vizAttachMathCardDrag(slot) {
+    const card = document.getElementById(`viz-math-overlay-${slot}`);
+    if (!card || card.dataset.dragAttached === '1') return;
+    card.dataset.dragAttached = '1';
+    const panel = document.getElementById(`viz-panel-${slot}`);
+
+    // Pixel width of the "grab-to-resize" band around the card edge.
+    const EDGE = 8;
+    // Bounds on the uniform CSS ``--s`` scale factor. The card's
+    // dimensions, padding and every inner font-size are all multiples
+    // of ``--s`` (see ``.viz-math-overlay`` rules), so scaling stays
+    // aspect-locked and only the font (and proportionally the box)
+    // grows/shrinks. 0.6 ≈ "tight but readable", 3.5 ≈ "fills most of
+    // a 1080-tall canvas".
+    const MIN_SCALE = 0.6;
+    const MAX_SCALE = 3.5;
+
+    const state = {
+      mode: null, dx: 0, dy: 0, x0: 0, y0: 0,
+      w0: 0, h0: 0, l0: 0, t0: 0, s0: 1,
+    };
+
+    // Compute which resize "zone" the cursor is in based on its
+    // offset within the card. Returns one of:
+    //   'n','s','e','w','ne','nw','se','sw','move'
+    const zoneFor = (ev) => {
+      const cr = card.getBoundingClientRect();
+      const x = ev.clientX - cr.left;
+      const y = ev.clientY - cr.top;
+      const onLeft = x <= EDGE;
+      const onRight = x >= cr.width - EDGE;
+      const onTop = y <= EDGE;
+      const onBottom = y >= cr.height - EDGE;
+      if (onTop && onLeft) return 'nw';
+      if (onTop && onRight) return 'ne';
+      if (onBottom && onLeft) return 'sw';
+      if (onBottom && onRight) return 'se';
+      if (onTop) return 'n';
+      if (onBottom) return 's';
+      if (onLeft) return 'w';
+      if (onRight) return 'e';
+      return 'move';
+    };
+
+    const cursorFor = (zone) => {
+      switch (zone) {
+        case 'nw': case 'se': return 'nwse-resize';
+        case 'ne': case 'sw': return 'nesw-resize';
+        case 'n': case 's': return 'ns-resize';
+        case 'e': case 'w': return 'ew-resize';
+        default: return 'grab';
+      }
+    };
+
+    const onCardHover = (ev) => {
+      if (state.mode) return;  // active drag/resize sets its own cursor
+      card.style.cursor = cursorFor(zoneFor(ev));
+    };
+
+    const currentScale = () => {
+      const v = parseFloat(card.style.getPropertyValue('--s'));
+      return Number.isFinite(v) && v > 0 ? v : 1;
+    };
+
+    const onMouseDown = (ev) => {
+      if (ev.button !== 0) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      const cr = card.getBoundingClientRect();
+      const pr = panel.getBoundingClientRect();
+      const zone = zoneFor(ev);
+      state.mode = zone;
+      state.x0 = ev.clientX;
+      state.y0 = ev.clientY;
+      state.w0 = cr.width;
+      state.h0 = cr.height;
+      state.l0 = cr.left - pr.left;
+      state.t0 = cr.top - pr.top;
+      state.s0 = currentScale();
+      state.dx = ev.clientX - cr.left;
+      state.dy = ev.clientY - cr.top;
+      card.classList.add('viz-math-dragging');
+      // Pin via left/top so the default ``right: 14px`` CSS anchor
+      // stops fighting our explicit coordinates.
+      card.style.right = 'auto';
+      card.style.bottom = 'auto';
+      card.style.cursor = cursorFor(zone);
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    };
+
+    const onMouseMove = (ev) => {
+      if (!state.mode) return;
+      ev.preventDefault();
+      const pr = panel.getBoundingClientRect();
+      const dx = ev.clientX - state.x0;
+      const dy = ev.clientY - state.y0;
+
+      if (state.mode === 'move') {
+        let left = ev.clientX - pr.left - state.dx;
+        let top = ev.clientY - pr.top - state.dy;
+        const margin = 24;
+        left = Math.max(margin - state.w0, Math.min(left, pr.width - margin));
+        top = Math.max(0, Math.min(top, pr.height - margin));
+        card.style.left = `${left}px`;
+        card.style.top = `${top}px`;
+        return;
+      }
+
+      // Aspect-locked uniform scaling. Project the drag onto the
+      // dominant axis for the active handle and convert that pixel
+      // delta into a ``--s`` multiplier.
+      //
+      //   * For pure E/W handles the user obviously controls width;
+      //     ``widthDelta = ±dx``.
+      //   * For pure N/S handles the user controls height; we map that
+      //     onto width via the original aspect ratio so a single drag
+      //     produces one consistent scale change.
+      //   * For corners, take the larger of {width-equiv from dx,
+      //     width-equiv from dy} so the user can lead with either axis
+      //     and still feel "I'm growing the card uniformly".
+      const aspect = state.w0 / Math.max(1, state.h0);
+      let widthDelta = -Infinity;
+      const mode = state.mode;
+      if (mode === 'e' || mode === 'se' || mode === 'ne') widthDelta = Math.max(widthDelta, dx);
+      if (mode === 'w' || mode === 'sw' || mode === 'nw') widthDelta = Math.max(widthDelta, -dx);
+      if (mode === 's' || mode === 'se' || mode === 'sw') widthDelta = Math.max(widthDelta, dy * aspect);
+      if (mode === 'n' || mode === 'ne' || mode === 'nw') widthDelta = Math.max(widthDelta, -dy * aspect);
+      if (!Number.isFinite(widthDelta)) return;
+
+      const rawFactor = (state.w0 + widthDelta) / Math.max(1, state.w0);
+      const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, state.s0 * rawFactor));
+      const factor = newScale / state.s0;
+      const newW = state.w0 * factor;
+      const newH = state.h0 * factor;
+
+      // 1) Bump the CSS scale variable so every inner length (padding,
+      //    gap, font-sizes, grid column width) jumps in lock-step.
+      card.style.setProperty('--s', String(newScale));
+      // 2) Also pin the OUTER box to the analytically-predicted size.
+      //    Natural content sizing alone doesn't reliably grow the box
+      //    proportionally — the math row's formula text can sit
+      //    inside a KaTeX-style fixed-pixel span that doesn't track
+      //    --s, so the box would end up shorter and wider than the
+      //    target ratio. Pinning width/height keeps the aspect locked
+      //    regardless of inner-content rendering quirks; ``overflow:
+      //    hidden`` in CSS clips anything that doesn't fit.
+      card.style.width = `${newW}px`;
+      card.style.height = `${newH}px`;
+
+      // Anchor the opposite edge so a top/left drag visually grows
+      // away from the anchored corner.
+      let newL = state.l0;
+      let newT = state.t0;
+      if (mode.includes('w')) newL = state.l0 + (state.w0 - newW);
+      if (mode.includes('n')) newT = state.t0 + (state.h0 - newH);
+      card.style.left = `${newL}px`;
+      card.style.top = `${newT}px`;
+    };
+
+    const onMouseUp = () => {
+      if (!state.mode) return;
+      state.mode = null;
+      card.classList.remove('viz-math-dragging');
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      card.style.cursor = 'grab';
+    };
+
+    card.addEventListener('mousemove', onCardHover);
+    card.addEventListener('mousedown', onMouseDown);
+    card.addEventListener('contextmenu', (ev) => ev.preventDefault());
   },
 
   _vizValidationSideLabel(info) {
@@ -6701,7 +7717,7 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
     return Math.max(0, Math.min(value, nFrames - 1));
   },
 
-  _vizSetFrame(slot, frame) {
+  _vizSetFrame(slot, frame, options = {}) {
     const info = this._vizSlotInfo(slot);
     if (!info) return;
     const target = this._vizClampFrame(info, frame);
@@ -6713,16 +7729,18 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
     if (labelEl) labelEl.textContent = this._vizFrameLabel(info, target);
     this._vizUpdateFrameDetailButton(slot, info);
     this._vizUpdateMathOverlay(slot);
-    this._vizSendWs(slot, {action: 'set_frame', frame: target});
+    if (options.fromPlayback) this._viz.playInFlight[slot] = true;
+    const sent = this._vizSendWs(slot, {action: 'set_frame', frame: target});
+    if (options.fromPlayback && !sent) this._viz.playInFlight[slot] = false;
   },
 
-  _vizStepFrame(slot, delta) {
+  _vizStepFrame(slot, delta, options = {}) {
     const info = this._vizSlotInfo(slot);
     const nFrames = Math.max(1, Number(info?.n_frames || 0));
     if (!info || nFrames <= 1) return;
     const current = this._vizClampFrame(info, info.active_frame || 0);
     const next = (current + Number(delta || 0) + nFrames) % nFrames;
-    this._vizSetFrame(slot, next);
+    this._vizSetFrame(slot, next, options);
   },
 
   _vizFrameIcon(name) {
@@ -6736,6 +7754,7 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
       window.clearInterval(timer);
       delete this._viz.playTimers[slot];
     }
+    this._viz.playInFlight[slot] = false;
     const btn = document.getElementById(`viz-frame-play-${slot}`);
     if (btn) {
       btn.classList.remove('active');
@@ -6766,7 +7785,8 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
         this._vizStopPlayback(slot);
         return;
       }
-      this._vizStepFrame(slot, 1);
+      if (this._viz.playInFlight?.[slot]) return;
+      this._vizStepFrame(slot, 1, { fromPlayback: true });
     }, 450);
   },
 
@@ -6804,6 +7824,13 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
       slider.disabled = true;
       if (label) label.textContent = this._vizFrameLabel(info);
     }
+    // Surface the full frame description (LF / step / time / etc.) via the
+    // tooltip — we dropped the dedicated "详见信息" button to compact the
+    // toolbar, but the data is still available on hover.
+    if (label) {
+      const full = this._vizFrameFullLabel(info);
+      label.title = full || '';
+    }
     this._vizUpdateFrameButtons(slot, info);
     this._vizUpdateFrameDetailButton(slot, info);
     const minInput = document.getElementById(`viz-clim-min-${slot}`);
@@ -6820,6 +7847,16 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
     }
     const autoBtn = document.getElementById(`viz-clim-auto-${slot}`);
     if (autoBtn) autoBtn.classList.toggle('active', !info.clim);
+    const fontSelect = document.getElementById(`viz-legend-font-${slot}`);
+    if (fontSelect && info.legend_font_pt != null) {
+      const desired = String(info.legend_font_pt);
+      // Only update if it really differs to avoid clobbering any in-flight
+      // user interaction with the dropdown.
+      if (fontSelect.value !== desired) {
+        const hasOption = Array.from(fontSelect.options).some(o => o.value === desired);
+        if (hasOption) fontSelect.value = desired;
+      }
+    }
     const edgeBtn = document.getElementById(`viz-edges-${slot}`);
     if (edgeBtn) {
       edgeBtn._on = !!info.show_edges;
@@ -6832,10 +7869,134 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
     }
     this._vizUpdateMathOverlay(slot);
     this._vizUpdatePanelLabels();
+    this._vizSyncClipControls(slot, info);
     const emptyEl = document.getElementById(`viz-empty-${slot}`);
     if (emptyEl) emptyEl.style.display = 'none';
     this._vizRenderSourceSummary();
     this._vizRefreshCompareButtons();
+  },
+
+  _vizActiveClipAxis(slot) {
+    return document.querySelector(`.viz-clip-axis.active[data-slot="${slot}"]`)?.dataset.axis || 'z';
+  },
+
+  _vizCurrentClipPosition(slot) {
+    const slider = document.getElementById(`viz-clip-slider-${slot}`);
+    if (!slider) return 0.5;
+    return parseInt(slider.value, 10) / 1000;
+  },
+
+  _vizCurrentClipInvert(slot) {
+    return !!document.getElementById(`viz-clip-flip-${slot}`)?.classList.contains('active');
+  },
+
+  _vizClipPayload(slot, overrides = {}) {
+    // The 剖切 toggle replaced the legacy ``viz-clip-enable-*`` checkbox.
+    // Read the current on/off state from the button's ``.active`` class —
+    // if we forget this and fall back to the (now removed) checkbox, every
+    // slider drag / 翻转 click without an explicit ``enabled`` override
+    // ends up sending ``enabled: false`` and silently turns the cut off.
+    const toggleEl = document.getElementById(`viz-clip-toggle-${slot}`);
+    return {
+      action: 'set_clip',
+      enabled: overrides.enabled ?? !!toggleEl?.classList.contains('active'),
+      axis: overrides.axis ?? this._vizActiveClipAxis(slot),
+      position: overrides.position ?? this._vizCurrentClipPosition(slot),
+      invert: overrides.invert ?? this._vizCurrentClipInvert(slot),
+    };
+  },
+
+  _vizSendClip(slot, overrides = {}) {
+    this._vizSendWs(slot, this._vizClipPayload(slot, overrides));
+  },
+
+  // Coalesce rapid slider input: keep only the latest desired clip state
+  // per slot and never have more than one set_clip request in flight on
+  // the server. Once the server returns its info JSON we flush any newer
+  // pending state. This mirrors how ABAQUS view-cut keeps the UI fluid.
+  _vizClipBusy: {a: false, b: false},
+  _vizClipLatest: {a: null, b: null},
+
+  _vizQueueClip(slot, overrides) {
+    if (!this._vizClipLatest) this._vizClipLatest = {a: null, b: null};
+    if (!this._vizClipBusy) this._vizClipBusy = {a: false, b: false};
+    const prev = this._vizClipLatest[slot] || {};
+    this._vizClipLatest[slot] = {...prev, ...overrides};
+    if (!this._vizClipBusy[slot]) this._vizFlushClip(slot);
+  },
+
+  _vizFlushClip(slot) {
+    if (!this._vizClipLatest) return;
+    const latest = this._vizClipLatest[slot];
+    if (!latest) return;
+    this._vizClipLatest[slot] = null;
+    if (!this._vizClipBusy) this._vizClipBusy = {a: false, b: false};
+    this._vizClipBusy[slot] = true;
+    this._vizSendClip(slot, latest);
+  },
+
+  _vizOnClipReply(slot) {
+    if (!this._vizClipBusy || !this._vizClipBusy[slot]) return;
+    this._vizClipBusy[slot] = false;
+    if (this._vizClipLatest && this._vizClipLatest[slot]) {
+      this._vizFlushClip(slot);
+    }
+  },
+
+  _vizUpdateClipLabel(slot, position, clipInfo) {
+    const label = document.getElementById(`viz-clip-label-${slot}`);
+    if (!label) return;
+    const axis = (clipInfo?.axis || this._vizActiveClipAxis(slot) || 'z').toUpperCase();
+    // Show position as a relative percentage of the model's bounding box
+    // along the chosen axis (0% = min bound, 100% = max bound). Absolute
+    // world coordinates are kept in the tooltip for users who need them.
+    const pct = Math.round(Math.max(0, Math.min(1, position)) * 100);
+    label.textContent = `${axis} ${pct}%`;
+    const bounds = clipInfo?.bounds?.[axis.toLowerCase()];
+    if (Array.isArray(bounds) && bounds.length === 2) {
+      const coord = bounds[0] + position * (bounds[1] - bounds[0]);
+      label.title = `${axis} = ${coord.toPrecision(4)}  (${pct}% of ${bounds[0].toPrecision(3)} → ${bounds[1].toPrecision(3)})`;
+    } else if (typeof clipInfo?.coordinate === 'number' && Number.isFinite(clipInfo.coordinate)) {
+      label.title = `${axis} = ${clipInfo.coordinate.toPrecision(4)}`;
+    } else {
+      label.title = `${axis} ${pct}%`;
+    }
+  },
+
+  // Update the on/off visual state of the 剖切 toggle + every dependent
+  // control (axis buttons, slider, 翻转). Used both when the user clicks
+  // the toggle and when server state arrives via WebSocket.
+  _vizSetClipEnabledUI(slot, enabled) {
+    const toggle = document.getElementById(`viz-clip-toggle-${slot}`);
+    if (toggle) toggle.classList.toggle('active', !!enabled);
+    const slider = document.getElementById(`viz-clip-slider-${slot}`);
+    if (slider) slider.disabled = !enabled;
+    document.querySelectorAll(`.viz-clip-axis[data-slot="${slot}"]`).forEach(btn => {
+      btn.disabled = !enabled;
+    });
+    const flip = document.getElementById(`viz-clip-flip-${slot}`);
+    if (flip) flip.disabled = !enabled;
+  },
+
+  _vizSyncClipControls(slot, info) {
+    const clip = info?.clip || {};
+    const enabled = !!clip.enabled;
+    this._vizSetClipEnabledUI(slot, enabled);
+    const slider = document.getElementById(`viz-clip-slider-${slot}`);
+    if (slider) {
+      // Don't fight the user's active drag; only reflect server state when idle
+      if (document.activeElement !== slider) {
+        const pos = Number.isFinite(clip.position) ? clip.position : 0.5;
+        slider.value = String(Math.round(pos * 1000));
+      }
+    }
+    const flip = document.getElementById(`viz-clip-flip-${slot}`);
+    if (flip) flip.classList.toggle('active', !!clip.invert);
+    const axis = String(clip.axis || 'z').toLowerCase();
+    document.querySelectorAll(`.viz-clip-axis[data-slot="${slot}"]`).forEach(btn => {
+      btn.classList.toggle('active', String(btn.dataset.axis || '').toLowerCase() === axis);
+    });
+    this._vizUpdateClipLabel(slot, Number.isFinite(clip.position) ? clip.position : 0.5, clip);
   },
 
   _vizConnectWs(slot) {
@@ -6871,14 +8032,38 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
           ctx.fillRect(0, 0, targetWidth, targetHeight);
           ctx.drawImage(img, dx, dy, drawWidth, drawHeight);
           URL.revokeObjectURL(imgUrl);
+          this._vizProbeRefreshMarkers(slot);
+          this._vizElementSelectionRefresh(slot);
         };
         img.src = imgUrl;
       } else {
         try {
-          const info = JSON.parse(evt.data);
-          if (slot === 'a') this._viz.info_a = info;
-          else this._viz.info_b = info;
+          const parsed = JSON.parse(evt.data);
+          // Probe replies are framed as ``{type:'probe_result',...}``
+          // and must NOT replace ``info_a/info_b``; route them to the
+          // probe handler and stop.
+          if (parsed && parsed.type === 'probe_result') {
+            this._vizProbeApplyResult(slot, parsed);
+            return;
+          }
+          if (parsed && parsed.type === 'probe_extrema_result') {
+            this._vizProbeApplyExtremaResult(slot, parsed);
+            return;
+          }
+          if (parsed && parsed.type === 'probe_marker_projection') {
+            this._vizProbeApplyMarkerProjection(slot, parsed);
+            return;
+          }
+          if (parsed && parsed.type === 'element_selection') {
+            this._vizElementSelectionApplyState(slot, parsed.state || {});
+            return;
+          }
+          if (slot === 'a') this._viz.info_a = parsed;
+          else this._viz.info_b = parsed;
+          this._viz.playInFlight[slot] = false;
+          this._vizOnClipReply(slot);
           this._vizUpdateControls(slot);
+          if (slot === 'b') this._vizApplySyncDisplayLock();
         } catch (_) {}
       }
     };
@@ -6898,9 +8083,1620 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
     const ws = this._viz[`ws_${slot}`];
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(msg));
+      return true;
     } else if (ws && ws.readyState === WebSocket.CONNECTING) {
       ws.addEventListener('open', () => ws.send(JSON.stringify(msg)), {once: true});
+      return true;
     }
+    return false;
+  },
+
+  // ─────────────────────────────────────────────────────────────────
+  //   Probe (Abaqus-style picking) — Step 3 of the probe plan
+  // ─────────────────────────────────────────────────────────────────
+
+  _vizProbeToggle() {
+    const on = !this._viz.probeMode;
+    this._viz.probeMode = on;
+    const btn = document.getElementById('viz-probe-toggle');
+    const allFrames = document.getElementById('viz-probe-all-frames');
+    const extremaBtn = document.getElementById('viz-probe-extrema');
+    const extremaCount = document.getElementById('viz-probe-extrema-count');
+    const extremaVisible = document.getElementById('viz-probe-visible-only');
+    const wrap = document.querySelector('.viz-canvas-wrap');
+    if (btn) btn.classList.toggle('active', on);
+    document.querySelectorAll('.viz-probe-mode-btn').forEach(b => { b.disabled = !on; });
+    if (allFrames) allFrames.disabled = !on;
+    if (extremaBtn) extremaBtn.disabled = !on;
+    if (extremaCount) extremaCount.disabled = !on;
+    if (extremaVisible) extremaVisible.disabled = !on;
+    if (wrap) wrap.dataset.probing = on ? '1' : '0';
+    if (on) {
+      if (this._viz.elementSelectMode) this._vizElementSelectionToggle();
+      const activeInfo = this._vizSlotInfo('a');
+      const activeMeta = activeInfo?.field_meta?.[activeInfo?.active_field || ''];
+      const loc = String(activeMeta?.location || '').toLowerCase();
+      if (loc === 'gauss' || loc === 'element') this._viz.probeKind = 'element';
+      else if (loc === 'node') this._viz.probeKind = 'node';
+      document.querySelectorAll('.viz-probe-mode-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.probeMode === this._viz.probeKind);
+      });
+      // Remember per-slot active field so we can restore on toggle off
+      // (probe mode temporarily filters the field dropdown).
+      ['a', 'b'].forEach(slot => {
+        const info = this._vizSlotInfo(slot);
+        if (info) {
+          this._viz.probeSavedFieldKey[slot] = info.active_field || '';
+          this._viz.probeSavedFieldComponent[slot] = info.active_component;
+        }
+      });
+      ['a', 'b'].forEach(slot => {
+        this._vizUpdateControls(slot);
+        this._vizProbeApplyFieldConstraint(slot);
+      });
+      this._vizSetStatus('探针已开启：移动鼠标预览命中点/单元；左键固定；按住 Shift + 左键拖拽旋转模型。', 'alert');
+    } else {
+      this._vizProbeHideHover();
+      ['a', 'b'].forEach(slot => {
+        const saved = this._viz.probeSavedFieldKey[slot];
+        const info = this._vizSlotInfo(slot);
+        if (saved && info && info.active_field !== saved) {
+          this._vizSendWs(slot, {
+            action: 'set_field',
+            key: saved,
+            component: this._viz.probeSavedFieldComponent[slot] ?? null,
+          });
+        }
+        this._vizUpdateControls(slot);
+      });
+      this._vizSetStatus('探针已关闭');
+    }
+  },
+
+  _vizProbeSetKind(kind) {
+    if (kind !== 'node' && kind !== 'element') return;
+    if (this._viz.probeKind === kind && this._viz.probeMode) return;
+    this._viz.probeKind = kind;
+    document.querySelectorAll('.viz-probe-mode-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.probeMode === kind);
+    });
+    if (!this._viz.probeMode) return;
+    ['a', 'b'].forEach(slot => {
+      this._vizUpdateControls(slot);
+      this._vizProbeApplyFieldConstraint(slot);
+    });
+    this._vizProbeHideHover();
+    this._vizSetStatus('探针已开启：移动鼠标预览命中点/单元；左键固定；按住 Shift + 左键拖拽旋转模型。', 'alert');
+  },
+
+  _vizProbeApplyFieldConstraint(slot) {
+    if (!this._viz.probeMode) return;
+    const info = this._vizSlotInfo(slot);
+    if (!info) return;
+    const meta = info.field_meta || {};
+    const kind = this._viz.probeKind;
+    const allowed = kind === 'node'
+      ? new Set(['node'])
+      : new Set(['gauss', 'element']);
+    const activeKey = String(info.active_field || '');
+    const activeLoc = String(meta[activeKey]?.location || '').toLowerCase();
+    if (allowed.has(activeLoc)) return;
+    const ordered = Array.isArray(info.fields) && info.fields.length
+      ? info.fields
+      : Object.keys(meta);
+    const fallback = ordered.find(k =>
+      !String(k).startsWith('derived_')
+      && allowed.has(String(meta[k]?.location || '').toLowerCase())
+    );
+    if (fallback) {
+      this._vizSendWs(slot, {
+        action: 'set_field',
+        key: fallback,
+        component: null,
+      });
+    }
+  },
+
+  // Convert screen-space (page) coordinates into VizScene render-window
+  // pixels. The server renders at the fixed DEFAULT_WINDOW_SIZE
+  // (800×600) and the frontend draws the JPEG fit-inside-rect centred
+  // in the panel — we must invert that letterbox transform so the
+  // pick request lands on the rendered pixel the user actually sees.
+  _vizCanvasToRenderPixel(slot, clientX, clientY) {
+    const canvas = document.getElementById(`viz-canvas-${slot}`);
+    if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    const renderW = 800;
+    const renderH = 600;
+    const scale = Math.min(rect.width / renderW, rect.height / renderH);
+    const drawW = renderW * scale;
+    const drawH = renderH * scale;
+    const dx = (rect.width - drawW) / 2;
+    const dy = (rect.height - drawH) / 2;
+    const sx = (clientX - rect.left - dx) / scale;
+    const sy = (clientY - rect.top - dy) / scale;
+    if (sx < 0 || sx >= renderW || sy < 0 || sy >= renderH) return null;
+    return { x: Math.round(sx), y: Math.round(sy) };
+  },
+
+  _vizRenderPixelToPanel(slot, renderX, renderY) {
+    const canvas = document.getElementById(`viz-canvas-${slot}`);
+    const panel = document.getElementById(`viz-panel-${slot}`);
+    if (!canvas || !panel) return null;
+    const rect = canvas.getBoundingClientRect();
+    const pr = panel.getBoundingClientRect();
+    const renderW = 800;
+    const renderH = 600;
+    const scale = Math.min(rect.width / renderW, rect.height / renderH);
+    const drawW = renderW * scale;
+    const drawH = renderH * scale;
+    const dx = (rect.width - drawW) / 2;
+    const dy = (rect.height - drawH) / 2;
+    return {
+      x: (rect.left - pr.left) + dx + Number(renderX) * scale,
+      y: (rect.top - pr.top) + dy + Number(renderY) * scale,
+    };
+  },
+
+  _vizPointSlot(clientX, clientY) {
+    for (const slot of ['a', 'b']) {
+      const panel = document.getElementById(`viz-panel-${slot}`);
+      if (!panel || getComputedStyle(panel).display === 'none') continue;
+      const r = panel.getBoundingClientRect();
+      if (clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) return slot;
+    }
+    return null;
+  },
+
+  _vizElementSelectionToggle() {
+    const on = !this._viz.elementSelectMode;
+    this._viz.elementSelectMode = on;
+    const btn = document.getElementById('viz-element-select-toggle');
+    const panel = document.getElementById('viz-element-select-panel');
+    const wrap = document.querySelector('.viz-canvas-wrap');
+    if (btn) btn.classList.toggle('active', on);
+    if (panel) panel.style.display = on ? 'block' : 'none';
+    if (wrap) wrap.dataset.elementSelecting = on ? '1' : '0';
+    if (on && this._viz.probeMode) this._vizProbeToggle();
+    if (on) this._vizElementSelectionSetTab(this._viz.elementSelectTab || 'box');
+    if (!on) {
+      this._viz.elementBoxDrag = null;
+      this._viz.elementRightClickCandidate = null;
+      this._vizProbeHideHover();
+      ['a', 'b'].forEach(slot => {
+        document.getElementById(`viz-element-box-${slot}`)?.style.setProperty('display', 'none');
+        this._vizElementSelectionClearMarkers(slot);
+      });
+    }
+    this._vizSetStatus(on ? '单元选取：左键单击或拖框追加，按住shift+左键转动视角；右键单击撤销上一步，右键拖动仍平移模型；空格确认' : '单元选取已关闭', on ? 'alert' : undefined);
+    this._vizElementSelectionUpdateButtons();
+    ['a', 'b'].forEach(slot => this._vizElementSelectionRefresh(slot));
+  },
+
+  _vizElementSelectionSetTab(tab) {
+    const active = tab === 'ids' ? 'ids' : 'box';
+    this._viz.elementSelectTab = active;
+    document.querySelectorAll('.viz-element-tab').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.elementTab === active);
+      btn.setAttribute('aria-selected', btn.dataset.elementTab === active ? 'true' : 'false');
+    });
+    document.querySelectorAll('[data-element-tab-body]').forEach(body => {
+      body.style.display = body.dataset.elementTabBody === active ? '' : 'none';
+    });
+    if (this._viz.elementSelectMode) {
+      const status = active === 'ids'
+        ? '单元选取：编号选可输入起止单元号追加选择；鼠标移动预览当前结果量探针；空格确认隐藏选中'
+        : '单元选取：左键单击或拖框追加，按住shift+左键转动视角；右键单击撤销上一步，右键拖动仍平移模型；空格确认';
+      this._vizSetStatus(status, 'alert');
+    }
+  },
+
+  _vizElementSelectAt(slot, clientX, clientY, operation = 'add') {
+    const px = this._vizCanvasToRenderPixel(slot, clientX, clientY);
+    if (!px) return;
+    this._vizSendWs(slot, { action: 'element_select', x: px.x, y: px.y, operation });
+  },
+
+  _vizElementBoxStart(slot, clientX, clientY, operation = 'add') {
+    const startPx = this._vizCanvasToRenderPixel(slot, clientX, clientY);
+    if (!startPx) return;
+    const box = document.getElementById(`viz-element-box-${slot}`);
+    const panel = document.getElementById(`viz-panel-${slot}`);
+    if (!box || !panel) return;
+    const pr = panel.getBoundingClientRect();
+    this._viz.elementBoxDrag = {
+      slot,
+      startClientX: clientX,
+      startClientY: clientY,
+      startRender: startPx,
+      panelLeft: pr.left,
+      panelTop: pr.top,
+      operation,
+    };
+    box.style.display = 'block';
+    box.style.left = `${clientX - pr.left}px`;
+    box.style.top = `${clientY - pr.top}px`;
+    box.style.width = '0px';
+    box.style.height = '0px';
+  },
+
+  _vizElementBoxUpdate(clientX, clientY) {
+    const drag = this._viz.elementBoxDrag;
+    if (!drag) return;
+    const box = document.getElementById(`viz-element-box-${drag.slot}`);
+    if (!box) return;
+    const x0 = drag.startClientX - drag.panelLeft;
+    const y0 = drag.startClientY - drag.panelTop;
+    const x1 = clientX - drag.panelLeft;
+    const y1 = clientY - drag.panelTop;
+    box.style.left = `${Math.min(x0, x1)}px`;
+    box.style.top = `${Math.min(y0, y1)}px`;
+    box.style.width = `${Math.abs(x1 - x0)}px`;
+    box.style.height = `${Math.abs(y1 - y0)}px`;
+  },
+
+  _vizElementBoxFinish(clientX, clientY) {
+    const drag = this._viz.elementBoxDrag;
+    if (!drag) return;
+    this._viz.elementBoxDrag = null;
+    const box = document.getElementById(`viz-element-box-${drag.slot}`);
+    if (box) box.style.display = 'none';
+    const endRender = this._vizCanvasToRenderPixel(drag.slot, clientX, clientY);
+    if (!endRender) return;
+    const dx = Math.abs(clientX - drag.startClientX);
+    const dy = Math.abs(clientY - drag.startClientY);
+    if (dx < 4 && dy < 4) {
+      this._vizElementSelectAt(drag.slot, clientX, clientY, drag.operation || 'add');
+      return;
+    }
+    this._vizSendWs(drag.slot, {
+      action: 'element_box_select',
+      x0: drag.startRender.x,
+      y0: drag.startRender.y,
+      x1: endRender.x,
+      y1: endRender.y,
+      append: true,
+      operation: drag.operation || 'add',
+    });
+  },
+
+  _vizElementSelectionCommand(action) {
+    const slots = this._viz.compareMode && this._viz.info_b ? ['a', 'b'] : ['a'];
+    slots.forEach(slot => {
+      if (slot === 'b' && !this._viz.info_b) return;
+      this._vizSendWs(slot, { action });
+    });
+  },
+
+  _vizElementSelectionSelectIds() {
+    if (!this._viz.elementSelectMode) return;
+    const start = document.getElementById('viz-element-id-start')?.value ?? '';
+    const end = document.getElementById('viz-element-id-end')?.value ?? '';
+    const slots = this._viz.compareMode && this._viz.info_b ? ['a', 'b'] : ['a'];
+    slots.forEach(slot => {
+      if (slot === 'b' && !this._viz.info_b) return;
+      this._vizSendWs(slot, {
+        action: 'element_select_ids',
+        start_id: start,
+        end_id: end,
+        operation: 'add',
+      });
+    });
+  },
+
+  _vizElementSelectionConfirm(slot = null) {
+    const now = performance.now();
+    if (now - Number(this._viz.elementLastConfirmAt || 0) < 160) return;
+    this._viz.elementLastConfirmAt = now;
+    if (slot && this._viz.compareMode && this._viz.info_b) {
+      this._vizSendWs(slot, { action: 'element_hide_selected' });
+      return;
+    }
+    this._vizElementSelectionCommand('element_hide_selected');
+  },
+
+  _vizElementSelectionRefresh(slot) {
+    if (!this._viz.elementSelectMode) return;
+    this._vizSendWs(slot, { action: 'element_selection_state' });
+  },
+
+  _vizElementSelectionApplyState(slot, state) {
+    const current = this._viz.elementSelection?.[slot] || {};
+    this._viz.elementSelection[slot] = {
+      ...current,
+      selected: Array.isArray(state.selected) ? state.selected : [],
+      hidden_count: Number(state.hidden_count || 0),
+      can_undo: !!state.can_undo,
+      total_count: Number(state.total_count || current.total_count || 0),
+      markers: Array.isArray(state.markers) ? state.markers : [],
+    };
+    this._vizElementSelectionRenderMarkers(slot);
+    this._vizElementSelectionUpdateButtons();
+  },
+
+  _vizElementSelectionRenderMarkers(slot) {
+    this._vizElementSelectionClearMarkers(slot);
+    const state = this._viz.elementSelection?.[slot] || {};
+    const els = [];
+    (state.markers || []).forEach(item => {
+      const result = { marker: item.marker };
+      const el = this._vizProbeCreateMarker(slot, result, `select-${slot}-${item.cell_id}`, `Ele ${item.cell_id}`);
+      if (el) {
+        el.classList.add('viz-element-selection-marker');
+        els.push(el);
+      }
+    });
+    this._viz.elementSelectionMarkerEls[slot] = els;
+  },
+
+  _vizElementSelectionClearMarkers(slot) {
+    (this._viz.elementSelectionMarkerEls?.[slot] || []).forEach(el => {
+      try { el.parentElement?.removeChild(el); } catch (_) {}
+    });
+    this._viz.elementSelectionMarkerEls[slot] = [];
+  },
+
+  _vizElementSelectionClearForSlot(slot) {
+    this._vizElementSelectionClearMarkers(slot);
+    this._viz.elementSelection[slot] = { selected: [], hidden_count: 0, can_undo: false, total_count: 0, markers: [] };
+    this._vizElementSelectionUpdateButtons();
+  },
+
+  _vizElementSelectionUpdateButtons() {
+    const active = !!this._viz.elementSelectMode;
+    const activeSlots = this._viz.compareMode && this._viz.info_b ? ['a', 'b'] : ['a'];
+    const states = activeSlots.map(slot => this._viz.elementSelection?.[slot] || {});
+    const selected = states.reduce((sum, st) => sum + (Array.isArray(st.selected) ? st.selected.length : 0), 0);
+    const hidden = states.reduce((sum, st) => sum + Number(st.hidden_count || 0), 0);
+    const canUndo = states.some(st => !!st.can_undo);
+    document.querySelectorAll('[data-element-action="hide"]').forEach(btn => {
+      btn.disabled = !active || selected <= 0;
+    });
+    document.querySelectorAll('[data-element-action="show-only"]').forEach(btn => {
+      btn.disabled = !active || selected <= 0;
+    });
+    document.querySelectorAll('[data-element-action="undo"]').forEach(btn => {
+      btn.disabled = !active || !canUndo;
+    });
+    document.querySelectorAll('[data-element-action="restore"]').forEach(btn => {
+      btn.disabled = !active || hidden <= 0;
+    });
+    const idAdd = document.getElementById('viz-element-id-add');
+    if (idAdd) idAdd.disabled = !active;
+    const status = document.getElementById('viz-element-select-status');
+    if (status) status.textContent = `选中 ${selected} / 隐藏 ${hidden}`;
+  },
+
+  _vizProbeHoverThrottled(slot, ev, options = {}) {
+    const now = performance.now();
+    if (this._viz.probeHoverThrottleAt && (now - this._viz.probeHoverThrottleAt) < 30) return;
+    this._viz.probeHoverThrottleAt = now;
+    this._vizProbeSendHover(slot, ev, options);
+  },
+
+  _vizProbeSendHover(slot, ev, options = {}) {
+    const px = this._vizCanvasToRenderPixel(slot, ev.clientX, ev.clientY);
+    if (!px) {
+      this._vizProbeHideHover();
+      return;
+    }
+    const reqId = ++this._viz.probeNextReqId;
+    this._viz.probePending[slot] = reqId;
+    this._viz.probeLastCursor = { slot, clientX: ev.clientX, clientY: ev.clientY };
+    this._vizSendWs(slot, {
+      action: 'probe',
+      req_id: reqId,
+      mode: options.mode || this._viz.probeKind,
+      x: px.x,
+      y: px.y,
+    });
+  },
+
+  _vizProbeModeForSlot(slot) {
+    const info = this._vizSlotInfo(slot);
+    const meta = info?.field_meta || {};
+    const key = String(info?.active_field || '');
+    const loc = String(meta[key]?.location || '').toLowerCase();
+    if (loc === 'node') return 'node';
+    if (loc === 'gauss' || loc === 'element') return 'element';
+    return this._viz.probeKind || 'node';
+  },
+
+  _vizProbePinAt(slot, clientX, clientY) {
+    // Click commits a HARD pin: send a fresh probe with a marker
+    // ``probePinPending`` so the reply lands as a pin instead of a
+    // hover update. This avoids the race where the most-recent hover
+    // result was for a slightly different cursor position.
+    const px = this._vizCanvasToRenderPixel(slot, clientX, clientY);
+    if (!px) return;
+    const reqId = ++this._viz.probeNextReqId;
+    this._viz.probePending[slot] = reqId;
+    this._viz.probePinPending = { reqId, slot, clientX, clientY };
+    this._vizSendWs(slot, {
+      action: 'probe',
+      req_id: reqId,
+      mode: this._viz.probeKind,
+      include_frames: true,
+      x: px.x,
+      y: px.y,
+    });
+  },
+
+  _vizProbeApplyResult(slot, msg) {
+    const hoverOnly = !!this._viz.elementSelectMode && !this._viz.probeMode;
+    if (!this._viz.probeMode && !hoverOnly) return;
+    const pin = this._viz.probePinPending;
+    if (this._viz.probeMode && pin && pin.reqId === msg.req_id) {
+      this._viz.probePinPending = null;
+      if (msg.result) {
+        this._vizProbeCommitPin(pin.slot, msg.result, pin.clientX, pin.clientY);
+      }
+      return;
+    }
+    // Hover: drop late replies — only the latest req_id wins.
+    if (msg.req_id && msg.req_id !== this._viz.probePending[slot]) return;
+    if (!msg.result) {
+      this._vizProbeHideHover();
+      return;
+    }
+    this._vizProbeShowHover(slot, msg.result);
+  },
+
+  _vizProbeMaxCards() {
+    return 20;
+  },
+
+  _vizProbeRunExtrema() {
+    if (!this._viz.probeMode) {
+      this._vizSetStatus('请先开启“探针”，再使用极值探针。', 'alert');
+      return;
+    }
+    const countEl = document.getElementById('viz-probe-extrema-count');
+    const count = Math.max(1, Math.min(10, Number(countEl?.value || 1)));
+    const visibleOnly = !!document.getElementById('viz-probe-visible-only')?.checked;
+    const slots = (this._viz.compareMode && this._viz.info_b) ? ['a', 'b'] : ['a'];
+    if (this._viz.elementSelectMode) this._vizElementSelectionToggle();
+    this._vizProbeHideHover();
+    this._viz.extremaPending = {
+      total: slots.length,
+      done: 0,
+      added: 0,
+      requested: count,
+    };
+    slots.forEach(slot => {
+      const excluded = this._vizProbeExistingTargets(slot);
+      const reqId = ++this._viz.probeNextReqId;
+      this._vizSendWs(slot, {
+        action: 'probe_extrema',
+        req_id: reqId,
+        count,
+        include_frames: true,
+        exclude_nodes: excluded.nodes,
+        exclude_cells: excluded.cells,
+        visible_only: visibleOnly,
+      });
+    });
+    this._vizSetStatus(`正在生成极值探针：每个模型 ${count} 个${visibleOnly ? '，仅当前可见单元' : '，全部单元'}...`);
+  },
+
+  _vizProbeExistingTargets(slot) {
+    const nodes = [];
+    const cells = [];
+    (this._viz.probeCards || []).forEach(card => {
+      if (card.slot !== slot) return;
+      const r = card.result || {};
+      if (card.mode === 'node' && r.point_id !== undefined && r.point_id !== null) {
+        nodes.push(Number(r.point_id));
+      } else if (card.mode === 'element' && r.cell_id !== undefined && r.cell_id !== null) {
+        cells.push(Number(r.cell_id));
+      }
+    });
+    return {
+      nodes: [...new Set(nodes.filter(Number.isFinite))],
+      cells: [...new Set(cells.filter(Number.isFinite))],
+    };
+  },
+
+  _vizProbeApplyExtremaResult(slot, msg) {
+    const payload = msg?.payload || {};
+    const results = Array.isArray(payload.results) ? payload.results : [];
+    const before = this._viz.probeCards.length;
+    results.forEach((result, idx) => {
+      const p = this._vizProbeResultClientPoint(slot, result, idx);
+      this._vizProbeCommitPin(slot, result, p.clientX, p.clientY, { confirmOverflow: false });
+    });
+    const added = Math.max(0, this._viz.probeCards.length - before);
+    const pending = this._viz.extremaPending;
+    if (pending) {
+      pending.done += 1;
+      pending.added += results.length;
+      if (pending.done >= pending.total) {
+        this._vizSetStatus(`已生成 ${pending.added} 个极值探针`);
+        this._viz.extremaPending = null;
+      }
+    } else {
+      this._vizSetStatus(`已生成 ${results.length} 个极值探针`);
+    }
+    if (!results.length) {
+      const reason = payload.reason ? `（${payload.reason}）` : '';
+      this._vizSetStatus(`当前场变量没有可用极值${reason}`, 'alert');
+    }
+  },
+
+  _vizProbeResultClientPoint(slot, result, idx = 0) {
+    const panel = document.getElementById(`viz-panel-${slot}`);
+    const pr = panel?.getBoundingClientRect?.();
+    const marker = result?.marker || {};
+    let renderXY = null;
+    if (Array.isArray(marker.render_xy)) renderXY = marker.render_xy;
+    else if (Array.isArray(marker.label_xy)) renderXY = marker.label_xy;
+    if (Array.isArray(renderXY)) {
+      const p = this._vizRenderPixelToPanel(slot, renderXY[0], renderXY[1]);
+      if (p && pr) return { clientX: pr.left + p.x, clientY: pr.top + p.y };
+    }
+    if (pr) {
+      const offset = 18 + (Number(idx) % 8) * 18;
+      return { clientX: pr.left + offset, clientY: pr.top + offset };
+    }
+    return { clientX: 24 + idx * 18, clientY: 120 + idx * 18 };
+  },
+
+  _vizProbeShowHover(slot, result) {
+    let card = this._viz.probeHoverEl;
+    if (!card) card = document.getElementById('viz-probe-hover-card');
+    if (!card) return;
+    this._viz.probeHoverEl = card;
+    card.innerHTML = this._vizProbeRenderCardBody(slot, result, false);
+    const last = this._viz.probeLastCursor;
+    if (last && last.slot === slot) {
+      // Keep the card away from the right/bottom edges so it stays
+      // fully visible without scrolling the viewport.
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const cw = card.offsetWidth || 280;
+      const ch = card.offsetHeight || 120;
+      let left = last.clientX + 14;
+      let top = last.clientY + 14;
+      if (left + cw > vw - 8) left = Math.max(8, last.clientX - cw - 14);
+      if (top + ch > vh - 8) top = Math.max(8, last.clientY - ch - 14);
+      card.style.left = `${left}px`;
+      card.style.top = `${top}px`;
+    }
+    card.style.display = 'block';
+    this._viz.probeLastResult = { slot, result };
+    this._vizProbeUpdateHoverMarker(slot, result);
+  },
+
+  _vizProbeHideHover() {
+    const card = this._viz.probeHoverEl || document.getElementById('viz-probe-hover-card');
+    if (card) card.style.display = 'none';
+    this._vizProbeRemoveHoverMarker();
+    this._viz.probeLastResult = null;
+  },
+
+  _vizProbeCommitPin(slot, result, clientX, clientY, options = {}) {
+    const cards = this._viz.probeCards;
+    const maxCards = this._vizProbeMaxCards();
+    if (cards.length >= maxCards) {
+      if (options.confirmOverflow !== false) {
+        const ok = window.confirm(`已达 ${maxCards} 张上限，再添加将覆盖最老的（卡 #1）。继续？`);
+        if (!ok) return;
+      }
+      this._vizProbeRemoveCard(cards[0].id);
+    }
+    this._vizProbeCreatePinnedCard(slot, result, clientX, clientY);
+  },
+
+  _vizProbeCreatePinnedCard(slot, result, clientX, clientY) {
+    const host = document.getElementById(`viz-probe-pin-host-${slot}`);
+    const panel = document.getElementById(`viz-panel-${slot}`);
+    if (!host || !panel) return;
+    const pr = panel.getBoundingClientRect();
+    const id = this._viz.probeNextCardId++;
+    const info = this._vizSlotInfo(slot) || {};
+    const frozen = {
+      id, slot, mode: result.mode, result,
+      matIdentity: info.mat_identity || {},
+      field_label: this._vizProbeFieldShortLabel(result, slot),
+      field_key: result.field_key || '',
+      component_index: result.component_index ?? null,
+      frame_idx: result.frame_idx ?? null,
+      frame_time: result.frame_time ?? null,
+    };
+    const el = document.createElement('div');
+    el.className = 'viz-probe-card';
+    el.dataset.cardId = String(id);
+    el.innerHTML = this._vizProbeRenderCardBody(slot, result, true);
+    host.appendChild(el);
+    const w = el.offsetWidth || 280;
+    const h = el.offsetHeight || 140;
+    let left = (clientX - pr.left) - 12;
+    let top = (clientY - pr.top) + 12;
+    left = Math.max(8, Math.min(left, pr.width - w - 8));
+    top = Math.max(8, Math.min(top, pr.height - h - 8));
+    el.style.left = `${left}px`;
+    el.style.top = `${top}px`;
+    frozen.el = el;
+    this._viz.probeCards.push(frozen);
+    frozen.markerEl = this._vizProbeCreateMarker(slot, result, id, this._vizProbeMarkerLabel(id));
+    el.querySelector('.viz-probe-card-close')?.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      this._vizProbeRemoveCard(id);
+    });
+    this._vizProbeAttachPinDrag(el, panel);
+    this._vizProbeUpdateCounter();
+    const exportBtn = document.getElementById('viz-probe-export');
+    if (exportBtn) exportBtn.disabled = false;
+    const compareBtn = document.getElementById('viz-probe-compare');
+    if (compareBtn) compareBtn.disabled = false;
+  },
+
+  _vizProbeRemoveCard(id) {
+    const idx = this._viz.probeCards.findIndex(c => c.id === id);
+    if (idx < 0) return;
+    const card = this._viz.probeCards[idx];
+    try { card.el?.parentElement?.removeChild(card.el); } catch (_) {}
+    try { card.markerEl?.parentElement?.removeChild(card.markerEl); } catch (_) {}
+    this._viz.probeCards.splice(idx, 1);
+    this._vizProbeUpdateCounter();
+    const exportBtn = document.getElementById('viz-probe-export');
+    if (exportBtn) exportBtn.disabled = this._viz.probeCards.length === 0;
+    const compareBtn = document.getElementById('viz-probe-compare');
+    if (compareBtn) compareBtn.disabled = this._viz.probeCards.length === 0;
+  },
+
+  _vizProbeUpdateCounter() {
+    const el = document.getElementById('viz-probe-counter');
+    if (!el) return;
+    const n = this._viz.probeCards.length;
+    const maxCards = this._vizProbeMaxCards();
+    el.textContent = `${n}/${maxCards}`;
+    el.classList.toggle('viz-probe-counter-warn', n >= maxCards - 1);
+    this._viz.probeCards.forEach((card, idx) => {
+      const label = card.el?.querySelector?.('[data-probe-card-index]');
+      if (label) label.textContent = `探针${idx + 1}`;
+    });
+    ['a', 'b'].forEach(slot => this._vizProbeRefreshMarkers(slot));
+  },
+
+  _vizProbeCreateMarker(slot, result, cardId, labelText = '') {
+    const host = document.getElementById(`viz-probe-pin-host-${slot}`);
+    if (!host || !result?.marker) return null;
+    const marker = result.marker;
+    if (marker.type === 'node' && Array.isArray(marker.render_xy)) {
+      const p = this._vizRenderPixelToPanel(slot, marker.render_xy[0], marker.render_xy[1]);
+      if (!p) return null;
+      const el = document.createElement('div');
+      el.className = 'viz-probe-marker viz-probe-marker-node';
+      el.dataset.cardId = String(cardId);
+      el.style.left = `${p.x}px`;
+      el.style.top = `${p.y}px`;
+      if (labelText) {
+        const lab = document.createElement('span');
+        lab.className = 'viz-probe-marker-label';
+        lab.textContent = labelText;
+        el.appendChild(lab);
+      }
+      host.appendChild(el);
+      return el;
+    }
+    if (marker.type === 'element' && Array.isArray(marker.render_edges)) {
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.classList.add('viz-probe-marker', 'viz-probe-marker-element');
+      svg.dataset.cardId = String(cardId);
+      marker.render_edges.forEach((edge) => {
+        if (!Array.isArray(edge) || edge.length < 2) return;
+        const p0 = this._vizRenderPixelToPanel(slot, edge[0]?.[0], edge[0]?.[1]);
+        const p1 = this._vizRenderPixelToPanel(slot, edge[1]?.[0], edge[1]?.[1]);
+        if (!p0 || !p1) return;
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('x1', String(p0.x));
+        line.setAttribute('y1', String(p0.y));
+        line.setAttribute('x2', String(p1.x));
+        line.setAttribute('y2', String(p1.y));
+        svg.appendChild(line);
+      });
+      if (!svg.childNodes.length) return null;
+      if (labelText && Array.isArray(marker.label_xy)) {
+        const lp = this._vizRenderPixelToPanel(slot, marker.label_xy[0], marker.label_xy[1]);
+        if (lp) {
+          const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+          text.setAttribute('x', String(lp.x + 8));
+          text.setAttribute('y', String(lp.y - 8));
+          text.classList.add('viz-probe-marker-svg-label');
+          text.textContent = labelText;
+          svg.appendChild(text);
+        }
+      }
+      host.appendChild(svg);
+      return svg;
+    }
+    return null;
+  },
+
+  _vizProbeUpdateHoverMarker(slot, result) {
+    this._vizProbeRemoveHoverMarker();
+    const el = this._vizProbeCreateMarker(slot, result, 'hover');
+    if (el) {
+      el.classList.add('viz-probe-marker-hover');
+      this._viz.probeHoverMarkerEl = el;
+    }
+  },
+
+  _vizProbeRemoveHoverMarker() {
+    const el = this._viz.probeHoverMarkerEl;
+    if (el) {
+      try { el.parentElement?.removeChild(el); } catch (_) {}
+    }
+    this._viz.probeHoverMarkerEl = null;
+  },
+
+  _vizProbeMarkerLabel(cardId) {
+    const idx = this._viz.probeCards.findIndex(c => String(c.id) === String(cardId));
+    return idx >= 0 ? `探针${idx + 1}` : '';
+  },
+
+  _vizProbeRefreshMarkers(slot) {
+    const cards = (this._viz.probeCards || []).filter(c => c.slot === slot);
+    if (!cards.length) return;
+    const markers = cards.map(card => {
+      const r = card.result || {};
+      return {
+        card_id: card.id,
+        mode: card.mode,
+        point_id: r.point_id,
+        world_xyz: r.world_xyz,
+        cell_id: r.cell_id,
+      };
+    });
+    this._vizSendWs(slot, { action: 'project_probe_markers', markers });
+  },
+
+  _vizProbeApplyMarkerProjection(slot, msg) {
+    const updates = Array.isArray(msg?.markers) ? msg.markers : [];
+    updates.forEach(update => {
+      const card = this._viz.probeCards.find(c => String(c.id) === String(update.card_id) && c.slot === slot);
+      if (!card) return;
+      try { card.markerEl?.parentElement?.removeChild(card.markerEl); } catch (_) {}
+      if (update.marker) {
+        card.result.marker = update.marker;
+        card.markerEl = this._vizProbeCreateMarker(slot, card.result, card.id, this._vizProbeMarkerLabel(card.id));
+      } else {
+        card.markerEl = null;
+      }
+    });
+  },
+
+  _vizProbeFieldShortLabel(cardOrResult, slotOverride = null, gpIndex = null) {
+    const result = cardOrResult?.result || cardOrResult || {};
+    const slot = slotOverride || cardOrResult?.slot || '';
+    const info = this._vizSlotInfo(slot) || {};
+    const key = result.field_key || cardOrResult?.field_key || '';
+    const meta = (info.field_meta || {})[key] || {};
+    const code = this._vizVariableCode(key, meta);
+    const comp = result.component_index ?? cardOrResult?.component_index ?? null;
+    let suffix = '';
+    if (comp !== null && comp !== undefined && !Number.isNaN(Number(comp))) {
+      const labels = this._vizComponentLabels(meta.family || '', meta, key);
+      suffix = labels[Number(comp)] || String(Number(comp) + 1);
+      if (code === 'PE' && /^E/.test(suffix)) suffix = `PE${suffix.slice(1)}`;
+      if (code === 'S' && /^S/.test(suffix)) return suffix;
+      if (code === 'E' && /^E/.test(suffix)) return suffix;
+      if (code === 'PE' && /^PE/.test(suffix)) return suffix;
+      return `${code}${suffix}`;
+    }
+    if (code === 'S') suffix = 'mises';
+    else if (code === 'E') suffix = 'equiv';
+    else if (code === 'PE') suffix = 'mag';
+    else if (['U', 'NFORC', 'RF'].includes(code)) suffix = 'mag';
+    const base = suffix ? `${code}_${suffix}` : code;
+    if (gpIndex !== null && gpIndex !== undefined && result.mode === 'element') {
+      return `${base} GP${Number(gpIndex) + 1}`;
+    }
+    return base;
+  },
+
+  _vizProbeSubjectLabel(card, gpIndex = null) {
+    const r = card?.result || {};
+    const field = this._vizProbeFieldShortLabel(card, card.slot, gpIndex);
+    if (card.mode === 'node') return `${field} (Node=${r.point_id ?? '-'})`;
+    const gp = gpIndex !== null && gpIndex !== undefined ? `, GP${Number(gpIndex) + 1}` : '';
+    return `${field} (Elem=${r.cell_id ?? '-'}${gp})`;
+  },
+
+  _vizProbeRenderCardBody(slot, result, pinned) {
+    const slotLabel = String(slot || '').toUpperCase();
+    const info = this._vizSlotInfo(slot) || {};
+    const source = info.source || '';
+    const sourceShort = source ? source.split(/[\\/]/).pop() : '-';
+    const modeLabel = result.mode === 'element' ? '单元' : '节点';
+    const fieldLabel = this._vizProbeFieldShortLabel(result, slot);
+    const frameIdx = Number(result.frame_idx ?? 0) + 1;
+    let frameTxt = `Frame ${frameIdx}`;
+    if (result.frame_time !== null && result.frame_time !== undefined) {
+      frameTxt += ` (t=${this._vizFormatNumber(result.frame_time, 4)})`;
+    }
+    const headRight = pinned
+      ? `<span class="viz-probe-card-close" title="关闭这张卡">×</span>`
+      : '';
+    const head = `
+      <div class="viz-probe-card-head">
+        <span class="viz-probe-card-mode" data-mode="${UI.escapeAttr(result.mode)}">${modeLabel}</span>
+        <span class="viz-probe-card-source">${UI.escapeHtml(slotLabel + '-' + sourceShort)}</span>
+        ${pinned ? '<span class="viz-probe-card-index" data-probe-card-index></span>' : ''}
+        ${headRight}
+      </div>`;
+    const fieldRow = `
+      <div class="viz-probe-card-row"><span>Field</span><strong>${UI.escapeHtml(fieldLabel)}</strong></div>
+      <div class="viz-probe-card-row"><span>Frame</span><strong>${UI.escapeHtml(frameTxt)}</strong></div>`;
+    if (result.mode === 'node') {
+      const xyz = result.world_xyz || [];
+      const coordTxt = xyz.length === 3
+        ? `(${this._vizFormatNumber(xyz[0])}, ${this._vizFormatNumber(xyz[1])}, ${this._vizFormatNumber(xyz[2])})`
+        : '-';
+      const owning = Array.isArray(result.owning_cell_ids) ? result.owning_cell_ids : [];
+      const owningTxt = owning.length
+        ? `${owning.length} (${owning.slice(0, 6).join(', ')}${owning.length > 6 ? '…' : ''})`
+        : '0';
+      return head + fieldRow + `
+      <div class="viz-probe-card-row"><span>Node</span><strong>${result.point_id}</strong></div>
+      <div class="viz-probe-card-row"><span>Coord</span><strong>${UI.escapeHtml(coordTxt)}</strong></div>
+      <div class="viz-probe-card-row"><span>Value</span><strong>${this._vizFormatNumber(result.value, 6)}</strong></div>
+      <div class="viz-probe-card-row"><span>Belong (Ele)</span><strong>${UI.escapeHtml(owningTxt)}</strong></div>`;
+    }
+    // element mode
+    const c = result.centroid_xyz || [];
+    const cTxt = c.length === 3
+      ? `(${this._vizFormatNumber(c[0])}, ${this._vizFormatNumber(c[1])}, ${this._vizFormatNumber(c[2])})`
+      : '-';
+    const gauss = Array.isArray(result.gauss_values) ? result.gauss_values : [];
+    const gpItems = gauss.map((v, i) =>
+      `<div><code>GP${i + 1}</code><strong>${this._vizFormatNumber(v, 6)}</strong></div>`
+    ).join('');
+    return head + fieldRow + `
+      <div class="viz-probe-card-row"><span>Element</span><strong>${result.cell_id}</strong></div>
+      <div class="viz-probe-card-row"><span>Centroid</span><strong>${UI.escapeHtml(cTxt)}</strong></div>
+      <div class="viz-probe-card-gauss">Gauss values (${result.n_gauss} GP):</div>
+      <div class="viz-probe-card-gauss-list">${gpItems}</div>`;
+  },
+
+  _vizFormatNumber(v, sig = 4) {
+    if (v === null || v === undefined || Number.isNaN(v)) return '-';
+    const n = Number(v);
+    if (!Number.isFinite(n)) return '-';
+    const a = Math.abs(n);
+    if (a !== 0 && (a < 1e-3 || a >= 1e6)) return n.toExponential(Math.max(1, sig - 1));
+    return n.toPrecision(Math.max(2, sig));
+  },
+
+  _vizProbeAttachPinDrag(el, panel) {
+    let dx = 0, dy = 0, dragging = false;
+    el.addEventListener('mousedown', (ev) => {
+      if (ev.button !== 0) return;
+      const tgt = ev.target;
+      if (tgt && tgt.classList && tgt.classList.contains('viz-probe-card-close')) return;
+      const r = el.getBoundingClientRect();
+      if (ev.clientX >= r.right - 18 && ev.clientY >= r.bottom - 18) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      dx = ev.clientX - r.left;
+      dy = ev.clientY - r.top;
+      dragging = true;
+      el.classList.add('viz-probe-dragging');
+      const onMove = (m) => {
+        if (!dragging) return;
+        const pr = panel.getBoundingClientRect();
+        let nl = m.clientX - pr.left - dx;
+        let nt = m.clientY - pr.top - dy;
+        const w = el.offsetWidth;
+        const h = el.offsetHeight;
+        nl = Math.max(0, Math.min(nl, pr.width - w));
+        nt = Math.max(0, Math.min(nt, pr.height - h));
+        el.style.left = `${nl}px`;
+        el.style.top = `${nt}px`;
+      };
+      const onUp = () => {
+        dragging = false;
+        el.classList.remove('viz-probe-dragging');
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  },
+
+  _vizProbeShowCompareModal(show) {
+    const modal = document.getElementById('viz-probe-compare-modal');
+    if (modal) modal.style.display = show ? 'flex' : 'none';
+  },
+
+  _vizProbeDefaultCompareSettings() {
+    const cards = this._viz.probeCards || [];
+    const a = cards[0]?.id ?? null;
+    const b = cards[1]?.id ?? a;
+    return {
+      groups: [{
+        a, b,
+        gpA: 0,
+        gpB: 0,
+        allGp: false,
+        separateAxis: false,
+        logMode: 'none',
+      }],
+    };
+  },
+
+  _vizProbeOpenCompare() {
+    if (!this._viz.probeCards.length) {
+      this._vizSetStatus('请先固定至少一个探针。');
+      return;
+    }
+    this._vizProbeCloseCharts();
+    if (!this._viz.probeCompareSettings) {
+      this._viz.probeCompareSettings = this._vizProbeDefaultCompareSettings();
+    }
+    this._vizProbeNormalizeCompareSettings();
+    this._vizProbeRenderCompareModal();
+    this._vizProbeShowCompareModal(true);
+  },
+
+  _vizProbeNormalizeCompareSettings() {
+    const ids = new Set((this._viz.probeCards || []).map(c => c.id));
+    const fallback = this._viz.probeCards[0]?.id ?? null;
+    const settings = this._viz.probeCompareSettings || this._vizProbeDefaultCompareSettings();
+    let groups = Array.isArray(settings.groups) && settings.groups.length ? settings.groups : this._vizProbeDefaultCompareSettings().groups;
+    groups = groups.slice(0, 5).map(g => ({
+      a: ids.has(g.a) ? g.a : fallback,
+      b: ids.has(g.b) ? g.b : fallback,
+      gpA: Number.isFinite(Number(g.gpA)) ? Number(g.gpA) : 0,
+      gpB: Number.isFinite(Number(g.gpB)) ? Number(g.gpB) : 0,
+      allGp: !!g.allGp,
+      separateAxis: !!g.separateAxis,
+      logMode: ['none', 'y1', 'y2', 'both'].includes(g.logMode) ? g.logMode : 'none',
+    }));
+    this._viz.probeCompareSettings = { groups };
+  },
+
+  _vizProbeCardOptionLabel(card, idx) {
+    const r = card.result || {};
+    const idText = card.mode === 'node' ? `Node=${r.point_id ?? '-'}` : `Elem=${r.cell_id ?? '-'}`;
+    return `探针${idx + 1} · ${card.mode === 'node' ? '节点' : '单元'} · ${idText} · ${this._vizProbeFieldShortLabel(card)}`;
+  },
+
+  _vizProbeGpOptions(card, selected, forceAll = false) {
+    if (forceAll) return '<option value="0" selected>全部</option>';
+    if (!card || card.mode !== 'element') return '<option value="0">-</option>';
+    const n = Math.max(1, Number(card.result?.n_gauss || 1));
+    return Array.from({ length: n }, (_, i) =>
+      `<option value="${i}" ${Number(selected) === i ? 'selected' : ''}>GP${i + 1}</option>`
+    ).join('');
+  },
+
+  _vizProbeRenderCompareModal() {
+    this._vizProbeNormalizeCompareSettings();
+    const list = document.getElementById('viz-probe-compare-list');
+    if (!list) return;
+    const cards = this._viz.probeCards || [];
+    const opts = cards.map((card, idx) =>
+      `<option value="${card.id}">${UI.escapeHtml(this._vizProbeCardOptionLabel(card, idx))}</option>`
+    ).join('');
+    list.innerHTML = this._viz.probeCompareSettings.groups.map((g, idx) => {
+      const ca = cards.find(c => c.id === g.a) || cards[0];
+      const cb = cards.find(c => c.id === g.b) || cards[0];
+      const canRemove = this._viz.probeCompareSettings.groups.length > 1;
+      const canAdd = this._viz.probeCompareSettings.groups.length < 5;
+      return `
+        <div class="viz-probe-compare-row" data-compare-index="${idx}">
+          <div class="viz-probe-compare-side">
+            <button class="viz-btn viz-probe-compare-side-btn viz-probe-compare-add-row" title="在后面增加一组比较" ${canAdd ? '' : 'disabled'}>+</button>
+            <button class="viz-btn viz-probe-compare-side-btn viz-probe-compare-remove" title="删除这组比较" ${canRemove ? '' : 'disabled'}>-</button>
+          </div>
+          <div class="viz-probe-compare-main">
+            <div class="viz-probe-compare-row-head">
+              <strong>比较 ${idx + 1}</strong>
+            </div>
+            <div class="viz-probe-compare-grid">
+              <div></div>
+              <div class="viz-probe-compare-colhead">探针</div>
+              <div class="viz-probe-compare-colhead">子项</div>
+              <div class="viz-probe-compare-index">1</div>
+              <label>
+                <select data-role="a">${opts}</select>
+              </label>
+              <label>
+                <select data-role="gpA" ${g.allGp || ca?.mode !== 'element' ? 'disabled' : ''}>${this._vizProbeGpOptions(ca, g.gpA, g.allGp)}</select>
+              </label>
+              <div class="viz-probe-compare-index">2</div>
+              <label>
+                <select data-role="b">${opts}</select>
+              </label>
+              <label>
+                <select data-role="gpB" ${g.allGp || cb?.mode !== 'element' ? 'disabled' : ''}>${this._vizProbeGpOptions(cb, g.gpB, g.allGp)}</select>
+              </label>
+            </div>
+            <div class="viz-probe-compare-shared">
+              <label class="viz-inline-check"><input type="checkbox" data-role="allGp" ${g.allGp ? 'checked' : ''}><span>所有子项</span></label>
+              <label class="viz-inline-check"><input type="checkbox" data-role="separateAxis" ${g.separateAxis ? 'checked' : ''}><span>各自y轴</span></label>
+              <label class="viz-probe-compare-log">对数坐标
+                <select data-role="logMode">
+                  <option value="none" ${g.logMode === 'none' ? 'selected' : ''}>无</option>
+                  <option value="y1" ${g.logMode === 'y1' ? 'selected' : ''}>y1</option>
+                  <option value="y2" ${g.logMode === 'y2' ? 'selected' : ''} ${g.separateAxis ? '' : 'disabled'}>y2</option>
+                  <option value="both" ${g.logMode === 'both' ? 'selected' : ''} ${g.separateAxis ? '' : 'disabled'}>两个</option>
+                </select>
+              </label>
+            </div>
+          </div>
+        </div>`;
+    }).join('');
+    this._viz.probeCompareSettings.groups.forEach((g, idx) => {
+      const row = list.querySelector(`[data-compare-index="${idx}"]`);
+      if (!row) return;
+      row.querySelector('[data-role="a"]').value = String(g.a);
+      row.querySelector('[data-role="b"]').value = String(g.b);
+    });
+    list.querySelectorAll('.viz-probe-compare-row').forEach(row => {
+      const idx = Number(row.dataset.compareIndex || 0);
+      row.querySelectorAll('select,input').forEach(el => {
+        el.addEventListener('change', () => this._vizProbeCompareReadRow(idx, true));
+      });
+      row.querySelector('.viz-probe-compare-remove')?.addEventListener('click', () => {
+        this._viz.probeCompareSettings.groups.splice(idx, 1);
+        this._vizProbeRenderCompareModal();
+      });
+      row.querySelector('.viz-probe-compare-add-row')?.addEventListener('click', () => {
+        if (this._viz.probeCompareSettings.groups.length >= 5) return;
+        this._vizProbeCompareReadRow(idx, false);
+        const src = this._viz.probeCompareSettings.groups[idx] || this._vizProbeDefaultCompareSettings().groups[0];
+        this._viz.probeCompareSettings.groups.splice(idx + 1, 0, { ...src });
+        this._vizProbeRenderCompareModal();
+      });
+    });
+  },
+
+  _vizProbeCompareReadRow(idx, rerender = false) {
+    const row = document.querySelector(`#viz-probe-compare-list [data-compare-index="${idx}"]`);
+    if (!row) return;
+    const g = this._viz.probeCompareSettings.groups[idx];
+    g.a = Number(row.querySelector('[data-role="a"]')?.value || 0);
+    g.b = Number(row.querySelector('[data-role="b"]')?.value || 0);
+    g.gpA = Number(row.querySelector('[data-role="gpA"]')?.value || 0);
+    g.gpB = Number(row.querySelector('[data-role="gpB"]')?.value || 0);
+    g.allGp = !!row.querySelector('[data-role="allGp"]')?.checked;
+    g.separateAxis = !!row.querySelector('[data-role="separateAxis"]')?.checked;
+    g.logMode = row.querySelector('[data-role="logMode"]')?.value || 'none';
+    if (!g.separateAxis && (g.logMode === 'y2' || g.logMode === 'both')) g.logMode = 'y1';
+    if (rerender) this._vizProbeRenderCompareModal();
+  },
+
+  _vizProbeCompareAddGroup() {
+    this._vizProbeNormalizeCompareSettings();
+    if (this._viz.probeCompareSettings.groups.length >= 5) return;
+    const prev = this._viz.probeCompareSettings.groups[this._viz.probeCompareSettings.groups.length - 1] || this._vizProbeDefaultCompareSettings().groups[0];
+    this._viz.probeCompareSettings.groups.push({ ...prev });
+    this._vizProbeRenderCompareModal();
+  },
+
+  _vizProbeCloseCharts() {
+    document.querySelectorAll('.viz-probe-chart').forEach(el => el.remove());
+  },
+
+  _vizProbeSeriesForCard(card, gpIndex, axis = 1, style = 'solid', groupIndex = 0, allGp = false) {
+    const r = card.result || {};
+    const out = [];
+    if (card.mode === 'node') {
+      const frames = Array.isArray(r.frame_series) && r.frame_series.length
+        ? r.frame_series
+        : [{ frame_idx: card.frame_idx, frame_time: card.frame_time, value: r.value }];
+      out.push({
+        card, axis, style, groupIndex, gpIndex: null,
+        label: this._vizProbeSubjectLabel(card),
+        points: frames.map(fr => ({ frame_index: fr.frame_idx ?? '', frame_time: fr.frame_time ?? fr.frame_idx ?? 0, value: Number(fr.value) })),
+      });
+      return out;
+    }
+    const frames = Array.isArray(r.frame_series) && r.frame_series.length
+      ? r.frame_series
+      : [{ frame_idx: card.frame_idx, frame_time: card.frame_time, n_gauss: r.n_gauss, gauss_values: r.gauss_values || [] }];
+    const n = Math.max(1, Number(r.n_gauss || frames[0]?.n_gauss || 1));
+    const gpList = allGp ? Array.from({ length: n }, (_, i) => i) : [Math.max(0, Math.min(Number(gpIndex || 0), n - 1))];
+    gpList.forEach(gp => {
+      out.push({
+        card, axis, style, groupIndex, gpIndex: gp,
+        label: this._vizProbeSubjectLabel(card, gp),
+        points: frames.map(fr => {
+          const arr = Array.isArray(fr.gauss_values) ? fr.gauss_values : [];
+          return { frame_index: fr.frame_idx ?? '', frame_time: fr.frame_time ?? fr.frame_idx ?? 0, value: Number(arr[gp]) };
+        }),
+      });
+    });
+    return out;
+  },
+
+  _vizProbeCollectCompareSeries(group, groupIndex) {
+    const cards = this._viz.probeCards || [];
+    const a = cards.find(c => c.id === group.a) || cards[0];
+    const b = cards.find(c => c.id === group.b) || a;
+    if (!a || !b) return [];
+    const ax1 = 1;
+    const ax2 = group.separateAxis ? 2 : 1;
+    return [
+      ...this._vizProbeSeriesForCard(a, group.gpA, ax1, 'solid', groupIndex, group.allGp),
+      ...this._vizProbeSeriesForCard(b, group.gpB, ax2, 'dash', groupIndex, group.allGp),
+    ];
+  },
+
+  _vizProbeParula(i, n) {
+    const colors = ['#352a87', '#0f5cdd', '#1484d4', '#06a7c6', '#38b99e', '#7dbf7b', '#c7c75a', '#f6d746', '#f9b233', '#f17c22'];
+    if (n <= 1) return colors[0];
+    return colors[Math.round((colors.length - 1) * (i / (n - 1)))];
+  },
+
+  _vizProbeRunCompare() {
+    this._vizProbeNormalizeCompareSettings();
+    this._viz.probeCompareSettings.groups.forEach((_, idx) => this._vizProbeCompareReadRow(idx, false));
+    this._vizProbeCloseCharts();
+    this._viz.probeCompareSettings.groups.forEach((group, idx) => {
+      const series = this._vizProbeCollectCompareSeries(group, idx);
+      if (series.length) this._vizProbeCreateCompareChart(series, group, idx);
+    });
+    this._vizProbeShowCompareModal(false);
+  },
+
+  _vizProbeAxisScale(values, logScale) {
+    const clean = values.filter(v => Number.isFinite(v) && (!logScale || v > 0));
+    if (!clean.length) return { min: logScale ? 1e-6 : 0, max: logScale ? 1 : 1, log: logScale };
+    if (logScale) {
+      const minP = Math.floor(Math.log10(Math.max(Math.min(...clean), 1e-30)));
+      const maxP = Math.ceil(Math.log10(Math.max(...clean)));
+      return { min: 10 ** minP, max: 10 ** maxP, log: true };
+    }
+    let min = Math.min(...clean);
+    let max = Math.max(...clean);
+    if (min === max) {
+      const d = Math.abs(min || 1) * 0.1;
+      min -= d;
+      max += d;
+    }
+    const pad = (max - min) * 0.08;
+    return { min: min - pad, max: max + pad, log: false };
+  },
+
+  _vizProbeMapY(v, scale, top, h) {
+    if (!Number.isFinite(v)) return null;
+    if (scale.log) {
+      if (v <= 0) return null;
+      const a = Math.log10(scale.min);
+      const b = Math.log10(scale.max);
+      return top + h - ((Math.log10(v) - a) / (b - a || 1)) * h;
+    }
+    return top + h - ((v - scale.min) / (scale.max - scale.min || 1)) * h;
+  },
+
+  _vizProbeSameNumericAxis(a, b) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i += 1) {
+      const av = Number(a[i]);
+      const bv = Number(b[i]);
+      if (!Number.isFinite(av) || !Number.isFinite(bv)) return false;
+      if (Math.abs(av - bv) > 1e-9 * Math.max(1, Math.abs(av), Math.abs(bv))) return false;
+    }
+    return true;
+  },
+
+  _vizProbeCompareXAxis(series) {
+    const timeAxes = series.map(s => (s.points || []).map(p => Number(p.frame_time)));
+    const indexAxes = series.map(s => (s.points || []).map(p => Number(p.frame_index)));
+    const solidAxes = series.filter(s => s.style !== 'dash').map(s => (s.points || []).map(p => Number(p.frame_time)));
+    const dashAxes = series.filter(s => s.style === 'dash').map(s => (s.points || []).map(p => Number(p.frame_time)));
+    const allTimesFinite = timeAxes.length > 0 && timeAxes.every(axis => axis.length > 0 && axis.every(Number.isFinite));
+    const sameWithinEachSide = [solidAxes, dashAxes].every(groupAxes => (
+      groupAxes.length <= 1 || groupAxes.every(axis => this._vizProbeSameNumericAxis(axis, groupAxes[0]))
+    ));
+    const sameBetweenSides = solidAxes.length === 0 || dashAxes.length === 0
+      ? true
+      : this._vizProbeSameNumericAxis(solidAxes[0], dashAxes[0]);
+    const useTime = allTimesFinite && sameWithinEachSide && sameBetweenSides;
+    const allIndicesFinite = indexAxes.length > 0 && indexAxes.some(axis => axis.some(Number.isFinite));
+    return {
+      key: useTime ? 'frame_time' : 'frame_index',
+      label: useTime ? 'time' : 'frame',
+      fallbackKey: useTime ? 'frame_index' : 'frame_time',
+      hasFrameIndex: allIndicesFinite,
+    };
+  },
+
+  _vizProbePointX(point, xAxis) {
+    const primary = Number(point?.[xAxis.key]);
+    if (Number.isFinite(primary)) return primary;
+    const fallback = Number(point?.[xAxis.fallbackKey]);
+    return Number.isFinite(fallback) ? fallback : null;
+  },
+
+  _vizProbeXTicks(xmin, xmax, xs, xAxis) {
+    if (xAxis.key === 'frame_index') {
+      const unique = [...new Set(xs.map(v => Math.round(v * 1e9) / 1e9))].sort((a, b) => a - b);
+      if (unique.length <= 7) return unique;
+      const ticks = Array.from({ length: 5 }, (_, i) => Math.round(xmin + (xmax - xmin) * i / 4));
+      return [...new Set(ticks)].filter(v => v >= xmin && v <= xmax);
+    }
+    return Array.from({ length: 5 }, (_, i) => xmin + (xmax - xmin) * i / 4);
+  },
+
+  _vizProbeCreateCompareChart(series, group, groupIndex) {
+    const chartId = this._viz.probeNextChartId++;
+    const wrap = document.createElement('div');
+    wrap.className = 'viz-probe-chart';
+    wrap.style.left = `${80 + groupIndex * 34}px`;
+    wrap.style.top = `${110 + groupIndex * 34}px`;
+    const svg = this._vizProbeRenderCompareSvg(series, group, groupIndex);
+    wrap.innerHTML = `
+      <div class="viz-probe-chart-head">
+        <strong>探针比较 ${groupIndex + 1}</strong>
+        <div>
+          <button class="viz-btn" data-action="save-svg">保存图片</button>
+          <button class="viz-btn" data-action="save-csv">保存数据</button>
+          <button class="viz-btn" data-action="close">关闭</button>
+        </div>
+      </div>
+      <div class="viz-probe-chart-body">${svg}</div>`;
+    wrap.dataset.chartId = String(chartId);
+    document.body.appendChild(wrap);
+    this._vizProbeAttachChartDrag(wrap);
+    wrap.querySelector('[data-action="close"]')?.addEventListener('click', () => wrap.remove());
+    wrap.querySelector('[data-action="save-svg"]')?.addEventListener('click', () => {
+      const content = wrap.querySelector('svg')?.outerHTML || svg;
+      this._vizDownloadText(`probe_compare_${groupIndex + 1}.svg`, content, 'image/svg+xml;charset=utf-8');
+    });
+    wrap.querySelector('[data-action="save-csv"]')?.addEventListener('click', () => {
+      this._vizDownloadText(`probe_compare_${groupIndex + 1}.csv`, this._vizProbeCompareCsv(series), 'text/csv;charset=utf-8');
+    });
+  },
+
+  _vizProbeRenderCompareSvg(series, group, groupIndex) {
+    const W = 900, L = 92, R = group.separateAxis ? 92 : 36, T = 26, PH = 300;
+    const PW = W - L - R;
+    const xAxis = this._vizProbeCompareXAxis(series);
+    const xs = series.flatMap(s => s.points.map(p => this._vizProbePointX(p, xAxis))).filter(Number.isFinite);
+    let xmin = Math.min(...xs), xmax = Math.max(...xs);
+    if (!Number.isFinite(xmin) || xmin === xmax) { xmin = 0; xmax = Math.max(1, xmax || 1); }
+    if (xmin > 0 && xAxis.key === 'frame_index') xmin = 0;
+    const isLog1 = group.logMode === 'y1' || group.logMode === 'both' || (!group.separateAxis && group.logMode !== 'none');
+    const isLog2 = group.separateAxis && (group.logMode === 'y2' || group.logMode === 'both');
+    const y1Vals = series.filter(s => s.axis === 1).flatMap(s => s.points.map(p => p.value));
+    const y2Vals = series.filter(s => s.axis === 2).flatMap(s => s.points.map(p => p.value));
+    const y1 = this._vizProbeAxisScale(y1Vals.concat(group.separateAxis ? [] : y2Vals), isLog1);
+    const y2 = this._vizProbeAxisScale(y2Vals, isLog2);
+    const xMap = x => L + ((x - xmin) / (xmax - xmin || 1)) * PW;
+    const yMap = (v, axis) => this._vizProbeMapY(v, axis === 2 ? y2 : y1, T, PH);
+    const xAxisY = y1.min < 0 && y1.max > 0 && !y1.log ? yMap(0, 1) : T + PH;
+    const yAxisX = xmin < 0 && xmax > 0 ? xMap(0) : L;
+    const ticks = (min, max, log) => {
+      if (log) {
+        const a = Math.round(Math.log10(min));
+        const b = Math.round(Math.log10(max));
+        return Array.from({ length: Math.max(1, b - a + 1) }, (_, i) => 10 ** (a + i));
+      }
+      return Array.from({ length: 5 }, (_, i) => min + (max - min) * i / 4);
+    };
+    const fmt = v => {
+      if (!Number.isFinite(v)) return '';
+      const av = Math.abs(v);
+      if (av > 0 && (av < 1e-3 || av >= 1e5)) return v.toExponential(0).replace('e', 'e');
+      return Number(v).toPrecision(3);
+    };
+    const fmtX = v => {
+      if (xAxis.key === 'frame_index' && Math.abs(v - Math.round(v)) < 1e-8) return String(Math.round(v));
+      return fmt(v);
+    };
+    const yTicks1 = ticks(y1.min, y1.max, y1.log);
+    const yTicks2 = group.separateAxis ? ticks(y2.min, y2.max, y2.log) : [];
+    const colors = series.map((_, i) => this._vizProbeParula(i, series.length));
+    const paths = series.map((s, i) => {
+      const d = s.points.map(p => {
+        const xValue = this._vizProbePointX(p, xAxis);
+        if (xValue === null) return null;
+        const x = xMap(xValue);
+        const y = yMap(Number(p.value), s.axis);
+        return y === null ? null : `${x.toFixed(1)},${y.toFixed(1)}`;
+      }).filter(Boolean);
+      const dash = s.style === 'dash' ? 'stroke-dasharray="8 5"' : '';
+      return d.length ? `<polyline points="${d.join(' ')}" fill="none" stroke="${colors[i]}" stroke-width="2.4" ${dash}/>` : '';
+    }).join('');
+    const axisLabelY = T + PH + 58;
+    const legendCols = series.length > 8 ? 2 : 1;
+    const legendRowH = 22;
+    const legendRows = Math.ceil(series.length / legendCols);
+    const legendX = L;
+    const legendY = axisLabelY + 22;
+    const legendW = PW;
+    const legendColW = legendW / legendCols;
+    const legendH = Math.max(34, 14 + legendRows * legendRowH);
+    const H = legendY + legendH + 22;
+    const legend = series.map((s, i) => {
+      const col = i % legendCols;
+      const row = Math.floor(i / legendCols);
+      return `<g transform="translate(${legendX + 14 + col * legendColW},${legendY + 21 + row * legendRowH})">
+        <line x1="0" y1="0" x2="24" y2="0" stroke="${colors[i]}" stroke-width="2.4" ${s.style === 'dash' ? 'stroke-dasharray="8 5"' : ''}/>
+        <text x="32" y="5" fill="#111827" font-size="16">${UI.escapeHtml(s.label)}</text>
+      </g>`;
+    }).join('');
+    const yAxis1 = yTicks1.map(v => {
+      const y = yMap(v, 1);
+      return `<line x1="${L}" x2="${L + PW}" y1="${y}" y2="${y}" stroke="#d7d7d7" stroke-width="1"/><text x="${yAxisX - 10}" y="${y + 5}" fill="#111827" font-size="18" text-anchor="end">${fmt(v)}</text>`;
+    }).join('');
+    const yAxis2 = yTicks2.map(v => {
+      const y = yMap(v, 2);
+      return `<text x="${L + PW + 10}" y="${y + 5}" fill="#111827" font-size="18">${fmt(v)}</text>`;
+    }).join('');
+    const xTicks = this._vizProbeXTicks(xmin, xmax, xs, xAxis).map(v => {
+      const x = xMap(v);
+      return `<line x1="${x}" x2="${x}" y1="${T}" y2="${T + PH}" stroke="#d7d7d7" stroke-width="1"/><line x1="${x}" x2="${x}" y1="${xAxisY - 10}" y2="${xAxisY}" stroke="#111827" stroke-width="2"/><text x="${x}" y="${T + PH + 30}" fill="#111827" font-size="18" text-anchor="middle">${fmtX(v)}</text>`;
+    }).join('');
+    return `<svg class="viz-probe-chart-svg" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+      <rect width="${W}" height="${H}" fill="#ffffff"/>
+      <style>
+        .probe-chart-text { font-family: "Latin Modern Roman", "CMU Serif", "Cambria Math", "Times New Roman", serif; }
+      </style>
+      <g class="probe-chart-text">
+      ${yAxis1}${yAxis2}${xTicks}
+      <rect x="${L}" y="${T}" width="${PW}" height="${PH}" fill="none" stroke="#111827" stroke-width="2"/>
+      <line x1="${yAxisX}" y1="${T}" x2="${yAxisX}" y2="${T + PH}" stroke="#111827" stroke-width="2"/>
+      <line x1="${L}" y1="${xAxisY}" x2="${L + PW}" y2="${xAxisY}" stroke="#111827" stroke-width="2"/>
+      ${group.separateAxis ? `<line x1="${L + PW}" y1="${T}" x2="${L + PW}" y2="${T + PH}" stroke="#111827" stroke-width="2"/>` : ''}
+      ${paths}
+      <text x="${L + PW / 2}" y="${axisLabelY}" fill="#111827" font-size="22" text-anchor="middle" font-style="italic">${xAxis.label} <tspan font-size="18" font-style="normal">[-]</tspan></text>
+      <rect x="${legendX}" y="${legendY}" width="${legendW}" height="${legendH}" fill="#ffffff" stroke="#111827" stroke-width="2"/>
+      ${legend}
+      </g>
+    </svg>`;
+  },
+
+  _vizProbeCompareCsv(series) {
+    const cols = [
+      'probe_id', 'mode',
+      'node_id', 'coord_x', 'coord_y', 'coord_z',
+      'element_id', 'gauss_index', 'n_gauss',
+      'field_label', 'field_key', 'component_index', 'value',
+      'frame_index', 'frame_time', 'owning_elements',
+      'slot', 'mat_path', 'mat_mtime_iso', 'mat_size_bytes',
+      'producer_module', 'analysis_type',
+    ];
+    const esc = v => {
+      if (v === null || v === undefined) return '';
+      const s = String(v);
+      return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const rows = [];
+    series.forEach(s => {
+      const card = s.card;
+      const r = card.result || {};
+      const idx = this._viz.probeCards.findIndex(c => c.id === card.id) + 1;
+      const m = card.matIdentity || {};
+      const xyz = card.mode === 'node' ? (r.world_xyz || []) : (r.centroid_xyz || []);
+      s.points.forEach(p => rows.push({
+        probe_id: idx,
+        mode: card.mode,
+        node_id: card.mode === 'node' ? r.point_id ?? '' : '',
+        coord_x: xyz[0] ?? '',
+        coord_y: xyz[1] ?? '',
+        coord_z: xyz[2] ?? '',
+        element_id: card.mode === 'element' ? r.cell_id ?? '' : '',
+        gauss_index: card.mode === 'element' ? s.gpIndex ?? '' : '',
+        n_gauss: card.mode === 'element' ? r.n_gauss ?? '' : '',
+        field_label: this._vizProbeFieldShortLabel(card, card.slot, s.gpIndex),
+        field_key: card.field_key || '',
+        component_index: card.component_index ?? '',
+        value: p.value,
+        frame_index: p.frame_index,
+        frame_time: p.frame_time,
+        owning_elements: card.mode === 'node' ? (r.owning_cell_ids || []).join('|') : '',
+        slot: card.slot,
+        mat_path: m.source_path || '',
+        mat_mtime_iso: m.mtime_iso || '',
+        mat_size_bytes: m.size_bytes ?? '',
+        producer_module: m.producer_module || '',
+        analysis_type: m.analysis_type || '',
+      }));
+    });
+    return [cols.join(','), ...rows.map(row => cols.map(c => esc(row[c])).join(','))].join('\n');
+  },
+
+  _vizDownloadText(filename, text, type) {
+    const blob = new Blob([text], { type });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  },
+
+  _vizProbeAttachChartDrag(el) {
+    let dragging = false, ox = 0, oy = 0;
+    const head = el.querySelector('.viz-probe-chart-head');
+    head?.addEventListener('mousedown', ev => {
+      if (ev.button !== 0 || ev.target?.tagName === 'BUTTON') return;
+      const r = el.getBoundingClientRect();
+      ox = ev.clientX - r.left;
+      oy = ev.clientY - r.top;
+      dragging = true;
+      ev.preventDefault();
+    });
+    document.addEventListener('mousemove', ev => {
+      if (!dragging) return;
+      el.style.left = `${Math.max(0, ev.clientX - ox)}px`;
+      el.style.top = `${Math.max(0, ev.clientY - oy)}px`;
+    });
+    document.addEventListener('mouseup', () => { dragging = false; });
+  },
+
+  _vizProbeExportCsv() {
+    const cards = this._viz.probeCards;
+    if (!cards.length) return;
+    const allFrames = !!document.getElementById('viz-probe-all-frames')?.checked;
+    const cols = [
+      'node_id', 'coord_x', 'coord_y', 'coord_z',
+      'element_id', 'gauss_index', 'n_gauss',
+      'field_label', 'field_key', 'component_index', 'value',
+      'frame_index', 'frame_time',
+      'owning_elements',
+      'slot', 'mat_path', 'mat_mtime_iso', 'mat_size_bytes',
+      'producer_module', 'analysis_type',
+    ];
+    cols.unshift('probe_id', 'mode');
+    const csvCell = (v) => {
+      if (v === null || v === undefined) return '';
+      const s = String(v);
+      if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+      return s;
+    };
+    const dataRows = [];
+    cards.forEach((card, idx) => {
+      const cardIdx = idx + 1;
+      const m = card.matIdentity || {};
+      const baseRow = {
+        probe_id: cardIdx,
+        mode: card.mode,
+        slot: card.slot,
+        mat_path: m.source_path || '',
+        mat_mtime_iso: m.mtime_iso || '',
+        mat_size_bytes: m.size_bytes ?? '',
+        producer_module: m.producer_module || '',
+        analysis_type: m.analysis_type || '',
+        field_key: card.field_key || '',
+        field_label: card.field_label || '',
+        component_index: card.component_index ?? '',
+        frame_index: card.frame_idx ?? '',
+        frame_time: card.frame_time ?? '',
+      };
+      const r = card.result;
+      if (card.mode === 'node') {
+        const xyz = r.world_xyz || [];
+        const series = allFrames && Array.isArray(r.frame_series) && r.frame_series.length
+          ? r.frame_series
+          : [{ frame_idx: card.frame_idx, frame_time: card.frame_time, value: r.value }];
+        series.forEach((fr) => {
+          const row = {
+            ...baseRow,
+            frame_index: fr.frame_idx ?? '',
+            frame_time: fr.frame_time ?? '',
+            node_id: r.point_id ?? '',
+            coord_x: xyz[0] ?? '',
+            coord_y: xyz[1] ?? '',
+            coord_z: xyz[2] ?? '',
+            element_id: '',
+            gauss_index: '',
+            n_gauss: '',
+            value: fr.value ?? '',
+            owning_elements: (r.owning_cell_ids || []).join('|'),
+          };
+          dataRows.push(row);
+        });
+      } else {
+        const c0 = r.centroid_xyz || [];
+        const series = allFrames && Array.isArray(r.frame_series) && r.frame_series.length
+          ? r.frame_series
+          : [{
+              frame_idx: card.frame_idx,
+              frame_time: card.frame_time,
+              n_gauss: r.n_gauss,
+              gauss_values: r.gauss_values || [],
+            }];
+        series.forEach((fr) => {
+          const gauss = Array.isArray(fr.gauss_values) ? fr.gauss_values : [];
+          if (gauss.length === 0) {
+            // Defensive: element-located field with n_gauss=0 — emit an
+            // empty-value row so the card still appears in the export.
+            const row = {
+              ...baseRow,
+              frame_index: fr.frame_idx ?? '',
+              frame_time: fr.frame_time ?? '',
+              node_id: '',
+              coord_x: c0[0] ?? '',
+              coord_y: c0[1] ?? '',
+              coord_z: c0[2] ?? '',
+              element_id: r.cell_id ?? '',
+              gauss_index: '',
+              n_gauss: 0,
+              value: '',
+              owning_elements: '',
+            };
+            dataRows.push(row);
+          } else {
+            gauss.forEach((v, gi) => {
+              const row = {
+                ...baseRow,
+                frame_index: fr.frame_idx ?? '',
+                frame_time: fr.frame_time ?? '',
+                node_id: '',
+                coord_x: c0[0] ?? '',
+                coord_y: c0[1] ?? '',
+                coord_z: c0[2] ?? '',
+                element_id: r.cell_id ?? '',
+                gauss_index: gi,
+                n_gauss: fr.n_gauss ?? r.n_gauss ?? gauss.length,
+                value: v,
+                owning_elements: '',
+              };
+              dataRows.push(row);
+            });
+          }
+        });
+      }
+    });
+    if (allFrames) {
+      dataRows.sort((a, b) => {
+        const frameA = Number.isFinite(Number(a.frame_index)) ? Number(a.frame_index) : Number.MAX_SAFE_INTEGER;
+        const frameB = Number.isFinite(Number(b.frame_index)) ? Number(b.frame_index) : Number.MAX_SAFE_INTEGER;
+        if (frameA !== frameB) return frameA - frameB;
+        const gpA = Number.isFinite(Number(a.gauss_index)) ? Number(a.gauss_index) : -1;
+        const gpB = Number.isFinite(Number(b.gauss_index)) ? Number(b.gauss_index) : -1;
+        if (gpA !== gpB) return gpA - gpB;
+        return Number(a.probe_id || 0) - Number(b.probe_id || 0);
+      });
+    }
+    const rows = [cols.join(','), ...dataRows.map(row => cols.map(c => csvCell(row[c])).join(','))];
+    const csv = rows.join('\n');
+    const now = new Date();
+    const pad = (x) => String(x).padStart(2, '0');
+    const ts = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    const filename = `viz_probes_${ts}.csv`;
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+    this._vizSetStatus(`已导出 ${cards.length} 张探针卡${allFrames ? '（全部 frames）' : ''}到 ${filename}`);
+  },
+
+  _vizProbeClearForSlot(slot) {
+    // Called when a slot's MAT changes — drop pinned cards bound to
+    // this slot to avoid stale references to a closed scene.
+    const remaining = [];
+    this._viz.probeCards.forEach(card => {
+      if (card.slot === slot) {
+        try { card.el?.parentElement?.removeChild(card.el); } catch (_) {}
+        try { card.markerEl?.parentElement?.removeChild(card.markerEl); } catch (_) {}
+      } else {
+        remaining.push(card);
+      }
+    });
+    this._viz.probeCards = remaining;
+    this._vizProbeUpdateCounter();
+    const exportBtn = document.getElementById('viz-probe-export');
+    if (exportBtn) exportBtn.disabled = this._viz.probeCards.length === 0;
+    const compareBtn = document.getElementById('viz-probe-compare');
+    if (compareBtn) compareBtn.disabled = this._viz.probeCards.length === 0;
+    this._viz.probeSavedFieldKey[slot] = '';
+    this._viz.probeSavedFieldComponent[slot] = null;
   },
 
   async _vizRunDiff() {
@@ -7269,7 +10065,7 @@ border:1px solid rgba(255,255,255,0.08);margin-bottom:8px">
 
   _vizUpdateFrameDetailButton(slot, info) {
     const btn = document.getElementById(`viz-frame-detail-${slot}`);
-    if (!btn) return;
+    if (!btn || btn.tagName !== 'BUTTON') return;  // span placeholder
     const full = this._vizFrameFullLabel(info);
     const enabled = this._vizIsShakedownInfo(info) && !!full;
     btn.style.display = enabled ? '' : 'none';

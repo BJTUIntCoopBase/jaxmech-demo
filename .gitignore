@@ -29,3 +29,4 @@ StoredModels/
 # Temporary
 *.tmp
 TempTest/
+temp/

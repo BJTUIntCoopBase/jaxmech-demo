@@ -262,6 +262,27 @@ def scalarize_field(
         arr = arr[:, np.newaxis]
 
     n_comp = arr.shape[-1]
+    if component is None:
+        shell_slice = _default_shell_split_slice(field_key, vd, n_comp)
+        if shell_slice is not None:
+            scalar = np.linalg.norm(arr[..., shell_slice], axis=-1)
+            if location == "gauss":
+                return gauss_to_nodal(scalar, vd)
+            if location == "element":
+                return element_to_nodal(scalar, vd)
+            n_nodes = int(vd.points.shape[0]) if vd.points is not None else int(np.asarray(scalar).shape[0])
+            scalar = np.asarray(scalar, dtype=np.float64).reshape(-1)
+            if scalar.shape[0] == n_nodes:
+                return scalar
+            if scalar.size == n_nodes:
+                return scalar.reshape(n_nodes)
+            if n_nodes > 0 and scalar.size % n_nodes == 0:
+                ndof = scalar.size // n_nodes
+                return np.linalg.norm(scalar.reshape(n_nodes, ndof), axis=-1)
+            if scalar.shape[0] > n_nodes:
+                return scalar[:n_nodes]
+            return np.pad(scalar, (0, max(0, n_nodes - scalar.shape[0])))
+
     field_kind = _classify_field_kind(field_key)
 
     if component is not None and 0 <= component < n_comp:
@@ -298,6 +319,69 @@ def scalarize_field(
     if scalar.shape[0] > n_nodes:
         return scalar[:n_nodes]
     return np.pad(scalar, (0, max(0, n_nodes - scalar.shape[0])))
+
+
+def scalarize_per_gp(
+    field: np.ndarray,
+    vd: VizData,
+    location: str = "gauss",
+    *,
+    component: Optional[int] = None,
+    field_key: Optional[str] = None,
+) -> np.ndarray:
+    """Per-Gauss-point (or per-element) scalarization.
+
+    Mirrors the reduction rules in :func:`scalarize_field` (component
+    pick / Mises / equivalent strain / magnitude / shell sub-slice)
+    but stops **before** any Gauss-to-node averaging. The probe uses
+    this to report the raw N scalar values for the N Gauss points of
+    a single picked element, in the same scalarization the user sees
+    on screen.
+
+    Parameters
+    ----------
+    field : ndarray
+        Raw frame data, same shapes accepted by :func:`scalarize_field`.
+    vd : VizData
+    location : {'gauss', 'element'}
+    component : Optional[int]
+        If set, slice that component (no Mises / magnitude collapse).
+    field_key : Optional[str]
+        For kind classification and shell sub-slice detection.
+
+    Returns
+    -------
+    ndarray
+        ``(n_gauss_total,)`` for gauss location, or ``(n_elem,)`` for
+        element location.
+    """
+    arr = np.asarray(field, dtype=np.float64)
+    if location == "gauss":
+        arr = _normalize_gauss_field_layout(arr, vd)
+    if arr.ndim == 1:
+        arr = arr[:, np.newaxis]
+    n_comp = arr.shape[-1]
+
+    if component is None:
+        shell_slice = _default_shell_split_slice(field_key, vd, n_comp)
+        if shell_slice is not None:
+            return np.linalg.norm(arr[..., shell_slice], axis=-1)
+
+    field_kind = _classify_field_kind(field_key)
+
+    if component is not None and 0 <= component < n_comp:
+        return arr[..., component]
+    if field_kind == "stress" and n_comp == 6:
+        return _von_mises_6(arr)
+    if field_kind == "stress" and n_comp == 3:
+        return _von_mises_3(arr)
+    if field_kind == "strain" and n_comp == 6:
+        return _equivalent_strain_6(arr)
+    if field_kind == "strain" and n_comp == 3:
+        return _equivalent_strain_3(arr)
+    if n_comp > 1:
+        return np.linalg.norm(arr, axis=-1)
+    return arr[..., 0]
 
 
 def attach_field(
@@ -390,7 +474,7 @@ def _classify_field_kind(field_key: Optional[str]) -> str:
         return "scalar"
     if "generalized_stress" in key or "generalized_strain" in key:
         return "vector"
-    if key.startswith(("rsdms_sf_", "rsdms_sm_", "rsdms_ge_", "rsdms_gk_")):
+    if _is_shell_generalized_subfield_key(key):
         return "vector"
     if "stress" in key or key.startswith(("rsdms_s_res", "rsdms_s_tot", "rsdm_s_res", "rsdm_s_tot", "rsdm_xs_", "rsdms_xs_")):
         return "stress"
@@ -407,3 +491,68 @@ def _classify_field_kind(field_key: Optional[str]) -> str:
     ):
         return "vector"
     return "other"
+
+
+def _is_shell_generalized_subfield_key(key: str) -> bool:
+    return (
+        key.startswith((
+            "rsdms_sf_",
+            "rsdms_sm_",
+            "rsdms_ge_",
+            "rsdms_gk_",
+            "shakedown_sf_",
+            "shakedown_sm_",
+            "shakedown_ge_",
+            "shakedown_gk_",
+        ))
+        or "generalized_residual_sf" in key
+        or "generalized_residual_sm" in key
+        or "generalized_total_sf" in key
+        or "generalized_total_sm" in key
+        or "generalized_residual_ge" in key
+        or "generalized_residual_gk" in key
+        or "generalized_total_ge" in key
+        or "generalized_total_gk" in key
+    )
+
+
+def _default_shell_split_slice(field_key: Optional[str], vd: VizData, n_comp: int) -> Optional[slice]:
+    """Return the first physical shell subgroup for raw 6-component fields.
+
+    Raw shell fields such as ``SGEN=[SF,SM]`` and ``NFORC=[F,M]`` should not
+    fall through to a six-component norm or stress/strain equivalent measure.
+    The public UI exposes both subgroup magnitudes as derived fields; this
+    fallback keeps direct API calls and old selectors on the same convention by
+    using the first subgroup as the automatic scalar.
+    """
+    if n_comp < 6 or not field_key:
+        return None
+    key = str(field_key).lower()
+    fi = vd.field_info.get(str(field_key))
+    label = (fi.label if fi is not None else "").lower()
+    desc = (fi.description if fi is not None else "").lower()
+    text = f"{key} {label} {desc}"
+    if "shell generalized stress" in text or "shell generalized strain" in text:
+        return slice(0, 3)
+    if (
+        "shell displacement" in text
+        or "displacement/rotation" in text
+        or key in {"shell_u_nodal", "frame_u", "validation_jax_u", "validation_abaqus_u"}
+    ):
+        return slice(0, 3)
+    if (
+        "shell generalized nodal force" in text
+        or "force/moment" in text
+        or key in {
+            "shell_gen_internal_force",
+            "frame_nforc",
+            "validation_jax_nforc",
+            "validation_abaqus_nforc",
+            "rsdms_nforc",
+            "rsdms_ceq",
+            "rsdms_ferror",
+            "shakedown_equality_violation",
+        }
+    ):
+        return slice(0, 3)
+    return None
